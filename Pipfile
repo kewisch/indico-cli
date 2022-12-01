@@ -1,0 +1,24 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+requests = "*"
+lxml = "*"
+cssselect = "*"
+python-dateutil = "*"
+arghandler = "*"
+keyring = "*"
+
+[dev-packages]
+black = "*"
+isort = "*"
+flake8 = "*"
+
+[requires]
+python_version = "3.10"
+
+[scripts]
+lint = "sh -c 'black indico-cli; isort indico-cli; flake8 indico-cli'"
+cli = "python indico-cli/cli.py"
