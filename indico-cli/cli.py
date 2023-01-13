@@ -23,6 +23,51 @@ def init_logging(level, _):
         http.client.HTTPConnection.debuglevel = 1
 
 
+@subcmd("adduser", help="Provsion a user")
+def cmd_adduser(handler, indico, args):
+    handler.add_argument("email", help="The email name of the user")
+    handler.add_argument("firstname", help="The first name of the user")
+    handler.add_argument("familyname", help="The family  name of the user")
+    handler.add_argument("affiliation", nargs="?", help="The affiliation of the user")
+    args = handler.parse_args(args)
+
+    indico.adduser(args.email, args.firstname, args.familyname, args.affiliation)
+
+
+@subcmd("groupadduser", help="Adds a user to a group")
+def cmd_groupadduser(handler, indico, args):
+    handler.add_argument("group", help="The id or name of the group")
+    handler.add_argument("user", nargs="+", help="The id or email of the user")
+    args = handler.parse_args(args)
+
+    if args.group.isdigit():
+        groupid = int(args.group)
+    else:
+        groupdata = indico.searchgroup(args.group)
+        if len(groupdata) == 1:
+            groupid = groupdata[0]["id"]
+        else:
+            raise Exception("Could not find group " + args.group)
+
+    userids = set()
+    for user in args.user:
+        if user.isdigit():
+            userids.add(int(user))
+        else:
+            userdata = indico.searchuser(user)
+            if len(userdata) == 0:
+                print("Warning: Could not find user " + user)
+            else:
+                userids.add(userdata[0]["id"])
+
+    users = set(indico.getgroupusers(groupid))
+    if userids.issubset(users):
+        print("All users already in group {}".format(args.group))
+    else:
+        users.update(userids)
+        indico.editgroup(groupid, list(users))
+
+
 @subcmd("submitcheck", help="Check if all contributors have the submitter bit set")
 def cmd_submitcheck(handler, indico, args):
     handler.add_argument(

@@ -24,7 +24,7 @@ class Indico:
         self.headers = {"Authorization": "Bearer " + token}
         self.urlbase = urlbase
 
-    def _request(self, *args, **kwargs):
+    def _request(self, *args, expect_code=200, **kwargs):
 
         if "headers" not in kwargs:
             kwargs["headers"] = {}
@@ -38,7 +38,7 @@ class Indico:
             print("Your token has expired")
             sys.exit(1)
 
-        if r.status_code != 200:
+        if r.status_code != expect_code:
             raise Exception(
                 "Request for {} {} failed with {}".format(
                     args[0], args[1], r.status_code
@@ -56,6 +56,51 @@ class Indico:
             kwargs["data"] = json.dumps(kwargs["data"])
 
         return self._request(*args, **kwargs)
+
+    def adduser(self, email, firstname, lastname, affiliation):
+        data = {
+            "first_name": firstname,
+            "last_name": lastname,
+            "email": email,
+            "affiliation": affiliation,
+        }
+        url = urljoin(self.urlbase, "/admin/users/create")
+        r = self._request("POST", url, data=data)
+
+        return r.json()
+
+    def searchgroup(self, text, exact=True):
+        params = {"name": text, "exact": str(exact).lower()}
+        url = urljoin(self.urlbase, "/groups/api/search")
+        r = self._request("GET", url, params=params)
+        return r.json()["groups"]
+
+    def searchuser(self, email):
+        params = {"email": email, "exact": "true"}
+        url = urljoin(self.urlbase, "/user/search/")
+        r = self._request("GET", url, params=params)
+        return r.json()["users"]
+
+    def getgroupusers(self, group):
+        url = urljoin(self.urlbase, "/admin/groups/indico/{}/members".format(group))
+        r = self._request("GET", url)
+
+        data = r.json()
+        doc = lxml.html.document_fromstring(data["html"])
+
+        groups = [
+            int(link.attrib["data-href"].split("/")[-1])
+            for link in doc.xpath("//table/tbody/tr/td/a")
+        ]
+        return groups
+
+    def editgroup(self, group, members):
+        data = {"members": json.dumps(list(map(lambda u: "User:" + str(u), members)))}
+        url = urljoin(self.urlbase, "/admin/groups/indico/{}/edit".format(group))
+        r = self._request("POST", url, data=data, expect_code=302)
+
+        if r.headers["location"] != "/admin/groups/":
+            raise Exception("Unexpected response")
 
     def get_contributions(self, conference):
         # with open("contributions.json", "r") as gp:
