@@ -1,3 +1,4 @@
+import csv
 import getpass
 import http.client
 import json
@@ -7,6 +8,7 @@ import sys
 import keyring
 from arghandler import ArgumentHandler, subcmd
 from indico import Indico
+from progress.bar import Bar, Spinner
 
 INDICO_PROD_URL = "https://events.canonical.com"  # prod
 INDICO_STAGE_URL = "https://events.staging.canonical.com"  # staging
@@ -21,6 +23,28 @@ def init_logging(level, _):
 
     if level == logging.DEBUG:
         http.client.HTTPConnection.debuglevel = 1
+
+
+def setfield(data, fieldkey, fieldvalue):
+    fieldname, fieldtype, *_ = fieldkey.split("|") + [None]
+
+    if fieldtype == "BOOL":
+        data[fieldname] = True if fieldvalue.lower() in ("yes", "true", "1") else False
+    elif fieldtype == "CHOICE":
+        data[fieldname] = {fieldvalue: 1}
+    else:
+        data[fieldname] = fieldvalue
+
+    return data
+
+
+def regidmap(indico, conference):
+    return dict(
+        map(
+            lambda row: (row["personal_data"]["email"], row["registrant_id"]),
+            indico.get_registrations(conference),
+        )
+    )
 
 
 @subcmd("adduser", help="Provsion a user")
@@ -66,6 +90,209 @@ def cmd_groupadduser(handler, indico, args):
     else:
         users.update(userids)
         indico.editgroup(groupid, list(users))
+
+
+@subcmd("regbulk", help="Bulk register users, skipping those already existing")
+def cmd_regbulk(handler, indico, args):
+    handler.add_argument(
+        "conference", type=int, help="The id of the conference to edit"
+    )
+    handler.add_argument(
+        "regform", type=int, help="The id of the registration FORM to edit"
+    )
+    handler.add_argument(
+        "--notify", action="store_true", help="Notify the user of the change"
+    )
+    handler.add_argument("csvfile", help="The file with the data")
+    args = handler.parse_args(args)
+
+    cachereg = regidmap(indico, args.conference)
+    allusers = []
+
+    with open(args.csvfile, newline="") as csvfile:
+        reader = csv.DictReader(csvfile)
+
+        extrafields = reader.fieldnames.copy()
+        extrafields.remove("firstname")
+        extrafields.remove("lastname")
+        extrafields.remove("affiliation")
+        extrafields.remove("email")
+        extrafields.remove("position")
+
+        csvdatain = list(reader)
+
+    # First pass, find users that are not yet registered and register them using a CSV import
+    for row in csvdatain:
+        if row["email"] not in cachereg:
+            allusers.append(
+                [
+                    row["firstname"],
+                    row["lastname"],
+                    row["affiliation"],
+                    row["position"],
+                    "",  # Phone number, we'll likely never needs this
+                    row["email"],
+                ]
+            )
+
+    if len(allusers) > 0:
+        with Spinner("Registering {} new users".format(len(allusers))) as spinner:
+            indico.regcsvimport(
+                args.conference, args.regform, allusers, notify=args.notify
+            )
+            spinner.next()
+
+    # Reload cache to get new reg ids
+    cachereg = regidmap(indico, args.conference)
+
+    # For any extra fields, update the registrations with the new data
+    if len(extrafields):
+        with Bar("Updating user data", max=len(csvdatain)) as bar:
+            for row in csvdatain:
+                regid = cachereg[row["email"]]
+                data = {}
+                for field in extrafields:
+                    setfield(data, field, row[field])
+
+                try:
+                    indico.regedit(
+                        args.conference, args.regform, regid, data, notify=args.notify
+                    )
+                except Exception as e:
+                    print(regid, "FAILED", e)
+                bar.next()
+
+
+@subcmd("regedit", help="Edit a user registration")
+def cmd_regedit(handler, indico, args):
+    handler.add_argument(
+        "conference", type=int, help="The id of the conference to edit"
+    )
+    handler.add_argument(
+        "regform", type=int, help="The id of the registration FORM to edit"
+    )
+    handler.add_argument(
+        "regid", nargs="*", help="The registration id or email to edit"
+    )
+    handler.add_argument(
+        "--setbool",
+        nargs=2,
+        action="append",
+        default=[],
+        metavar=("fieldid", "value"),
+        help="Set a boolean field (yes,true,1 = True ; anything else = False)",
+    )
+    handler.add_argument(
+        "--settext",
+        nargs=2,
+        action="append",
+        default=[],
+        metavar=("fieldid", "value"),
+        help="Set a text field",
+    )
+    handler.add_argument(
+        "--setchoice",
+        nargs=2,
+        action="append",
+        default=[],
+        metavar=("fieldid", "guid"),
+        help="Set a choice field (guid of choice required)",
+    )
+    handler.add_argument(
+        "--notify", action="store_true", help="Notify the user of the change"
+    )
+    handler.add_argument(
+        "--all", "-a", action="store_true", help="Set the value on all registrants"
+    )
+    args = handler.parse_args(args)
+
+    if args.all:
+        print("Retrieving all registration ids", end="", flush=True)
+        args.regid = list(
+            map(
+                lambda row: row["registrant_id"],
+                indico.get_registrations(args.conference),
+            )
+        )
+        print("Done")
+    else:
+        print("Looking up emails...", end="", flush=True)
+        cachereg = regidmap(indico, args.conference)
+        try:
+            args.regid = list(
+                map(
+                    lambda regid: int(regid) if regid.isdigit() else cachereg[regid],
+                    args.regid,
+                )
+            )
+        except KeyError as e:
+            print("{} not found".format(e.args[0]))
+            sys.exit(1)
+        print("Done")
+
+    with Bar("Setting fields", max=len(args.regid)) as bar:
+        for regid in args.regid:
+            data = {}
+            for key, value in args.settext:
+                data[key] = value
+
+            for key, value in args.setbool:
+                data[key] = True if value.lower() in ("yes", "true", "1") else False
+
+            for key, value in args.setchoice:
+                data[key] = {value: 1}
+
+            try:
+                indico.regedit(args.conference, args.regform, regid, data, args.notify)
+            except Exception as e:
+                print(regid, "FAILED", e)
+            bar.next()
+
+
+@subcmd("regeditcsv", help="Bulk edit user registration via csv")
+def cmd_regeditcsv(handler, indico, args):
+    handler.add_argument(
+        "conference", type=int, help="The id of the conference to edit"
+    )
+    handler.add_argument(
+        "regform", type=int, help="The id of the registration FORM to edit"
+    )
+    handler.add_argument(
+        "--notify", action="store_true", help="Notify the user of the change"
+    )
+    handler.add_argument("csvfile", help="The file with the data")
+    args = handler.parse_args(args)
+
+    with open(args.csvfile, newline="") as csvfile:
+        reader = csv.DictReader(csvfile)
+        cachereg = None
+        if "email" not in reader.fieldnames and "regid" not in reader.fieldnames:
+            raise Exception("Missing email or reg id in reg file")
+        if "regid" not in reader.fieldnames:
+            cachereg = dict(
+                map(
+                    lambda row: (row["personal_data"]["email"], row["registrant_id"]),
+                    indico.get_registrations(args.conference),
+                )
+            )
+
+        with Bar("Setting fields", max=len(args.regid)) as bar:
+            for row in reader:
+                regid = row["regid"] if "regid" in row else cachereg[row["email"]]
+
+                data = {}
+                for field in reader.fieldnames:
+                    if field == "email" and "regid" not in row:
+                        continue
+                    setfield(data, field, row[field])
+
+                try:
+                    indico.regedit(
+                        args.conference, args.regform, regid, data, args.notify
+                    )
+                except Exception as e:
+                    print(regid, "FAILED", e)
+                bar.next()
 
 
 @subcmd("submitcheck", help="Check if all contributors have the submitter bit set")

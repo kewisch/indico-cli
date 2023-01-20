@@ -1,3 +1,5 @@
+import csv
+import io
 import json
 import sys
 import time
@@ -24,7 +26,7 @@ class Indico:
         self.headers = {"Authorization": "Bearer " + token}
         self.urlbase = urlbase
 
-    def _request(self, *args, expect_code=200, **kwargs):
+    def _request(self, *args, expect_code=200, ignore_code=False, **kwargs):
 
         if "headers" not in kwargs:
             kwargs["headers"] = {}
@@ -38,7 +40,7 @@ class Indico:
             print("Your token has expired")
             sys.exit(1)
 
-        if r.status_code != expect_code:
+        if not ignore_code and r.status_code != expect_code:
             raise Exception(
                 "Request for {} {} failed with {}".format(
                     args[0], args[1], r.status_code
@@ -101,6 +103,60 @@ class Indico:
 
         if r.headers["location"] != "/admin/groups/":
             raise Exception("Unexpected response")
+
+    def get_registrations(self, conference):
+        url = urljoin(self.urlbase, "/api/events/{}/registrants".format(conference))
+        r = self._request("GET", url)
+        return r.json()["registrants"]
+
+    def regedit(self, conference, regform, regid, customfields={}, notify=False):
+        data = customfields.copy()
+        data["notify_user"] = notify
+
+        url = urljoin(
+            self.urlbase,
+            "/event/{}/manage/registration/{}/registrations/{}/edit".format(
+                conference, regform, regid
+            ),
+        )
+        r = self._request("POST", url, json=data)
+
+        rdata = r.json()
+        if not rdata["redirect"]:
+            raise Exception("Unexpected response")
+
+    def regcsvimport(self, conference, regform, rowdata, moderate=False, notify=False):
+        url = urljoin(
+            self.urlbase,
+            "/event/{}/manage/registration/{}/registrations/import".format(
+                conference, regform
+            ),
+        )
+
+        csvout = io.StringIO()
+        writer = csv.writer(csvout)
+        writer.writerows(rowdata)
+
+        files = {"source_file": ("import.csv", csvout.getvalue())}
+        data = {
+            "__file_change_trigger": "added-file",
+        }
+        if not moderate:
+            data["skip_moderation"] = "y"
+
+        if notify:
+            data["notify_users"] = "y"
+
+        r = self._request("POST", url, ignore_code=True, files=files, data=data)
+
+        if r.status_code == 400:
+            doc = lxml.html.document_fromstring(r.text)
+            error = doc.cssselect(".main .error-box p")[0].text_content().strip()
+            raise Exception(error)
+
+        if r.status_code != 200:
+            print(r.text)
+            raise Exception("Request failed with {}".format(r.status_code))
 
     def get_contributions(self, conference):
         # with open("contributions.json", "r") as gp:

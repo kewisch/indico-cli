@@ -10,6 +10,7 @@ cssselect = "*"
 python-dateutil = "*"
 arghandler = "*"
 keyring = "*"
+progress = "*"
 
 [dev-packages]
 black = "*"
