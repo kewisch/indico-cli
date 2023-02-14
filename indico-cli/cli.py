@@ -8,7 +8,8 @@ import sys
 import keyring
 from arghandler import ArgumentHandler, subcmd
 from indico import Indico
-from progress.bar import Bar, Spinner
+from progress.bar import Bar
+from progress.spinner import Spinner
 
 INDICO_PROD_URL = "https://events.canonical.com"  # prod
 INDICO_STAGE_URL = "https://events.staging.canonical.com"  # staging
@@ -113,17 +114,30 @@ def cmd_regbulk(handler, indico, args):
         reader = csv.DictReader(csvfile)
 
         extrafields = reader.fieldnames.copy()
-        extrafields.remove("firstname")
-        extrafields.remove("lastname")
-        extrafields.remove("affiliation")
-        extrafields.remove("email")
-        extrafields.remove("position")
+        if "firstname" in extrafields:
+            extrafields.remove("firstname")
+        if "lastname" in extrafields:
+            extrafields.remove("lastname")
+        if "affiliation" in extrafields:
+            extrafields.remove("affiliation")
+        if "email" in extrafields:
+            extrafields.remove("email")
+        if "position" in extrafields:
+            extrafields.remove("position")
 
         csvdatain = list(reader)
 
     # First pass, find users that are not yet registered and register them using a CSV import
     for row in csvdatain:
-        if row["email"] not in cachereg:
+        if "email" not in row:
+            raise Exception("CSV file at least requires an email address as key")
+        if (
+            row["email"] not in cachereg
+            and "firstname" in row
+            and "lastname" in row
+            and "affiliation" in row
+            and "position" in row
+        ):
             allusers.append(
                 [
                     row["firstname"],
@@ -134,6 +148,8 @@ def cmd_regbulk(handler, indico, args):
                     row["email"],
                 ]
             )
+        elif row["email"] not in cachereg:
+            raise Exception("User {} is not yet registered".format(row["email"]))
 
     if len(allusers) > 0:
         with Spinner("Registering {} new users".format(len(allusers))) as spinner:
@@ -142,8 +158,8 @@ def cmd_regbulk(handler, indico, args):
             )
             spinner.next()
 
-    # Reload cache to get new reg ids
-    cachereg = regidmap(indico, args.conference)
+        # Reload cache to get new reg ids
+        cachereg = regidmap(indico, args.conference)
 
     # For any extra fields, update the registrations with the new data
     if len(extrafields):
@@ -247,6 +263,50 @@ def cmd_regedit(handler, indico, args):
             except Exception as e:
                 print(regid, "FAILED", e)
             bar.next()
+
+
+@subcmd("regfields", help="Get field names for CSV import")
+def cmd_regfields(handler, indico, args):
+    handler.add_argument(
+        "conference", type=int, help="The id of the conference to edit"
+    )
+    handler.add_argument(
+        "regform", type=int, help="The id of the registration FORM to edit"
+    )
+    args = handler.parse_args(args)
+
+    data = indico.regfields(args.conference, args.regform)
+    for field, title in data.items():
+        print("{0:<12}: {1}".format(field, title))
+
+    print(
+        """
+        With this information you can create the heading for the CSV file.
+        When you are registering new users, you need to have the following fields:
+          * firstname
+          * lastname
+          * affiliation      (This is the company, e.g. Canonical)
+          * position         (This is used for the team)
+          * email
+
+        email,firstname,lastname,affiliation,position,field_85,field_234|BOOL,field_233|BOOL,field_235|BOOL
+        user@example.com,John,Doe,Canonical,Community,REQ-123123,yes,yes,no
+        user2@example.com,Jane,Doe,Canonical,MAAS,REQ-232324,no,yes,no
+
+        If you are certain those users are already registered, you can provide just the email field.
+
+        email,field_234|BOOL,field_233|BOOL,field_235|BOOL
+        user@example.com,yes,yes,no
+        user2@example.com,no,yes,no
+
+        What is easy to set at this point is text fields and Yes/No choices. Setting fields that
+        have multiple choices such as shirt size require some additional code I haven't written
+
+        Then run:
+
+        pipenv run cli regbulk <conference> <regform> mycsvfile.csv
+    """
+    )
 
 
 @subcmd("regeditcsv", help="Bulk edit user registration via csv")

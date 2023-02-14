@@ -125,6 +125,31 @@ class Indico:
         if not rdata["redirect"]:
             raise Exception("Unexpected response")
 
+    def regfields(self, conference, regform):
+        url = urljoin(
+            self.urlbase,
+            "/event/{}/manage/registration/{}/display".format(conference, regform),
+        )
+        r = self._request("GET", url)
+        data = r.json()
+        doc = lxml.html.document_fromstring(data["html"])
+
+        data = {
+            "firstname": "First name",
+            "lastname": "Last name",
+            "affiliation": "Company",
+            "email": "Email",
+            "position": "Team",
+            "country": "ISO Country code",
+        }
+
+        for node in doc.cssselect("[data-item-id]"):
+            data["field_" + node.attrib["data-item-id"]] = node.cssselect(".title")[
+                0
+            ].text_content()
+
+        return data
+
     def regcsvimport(self, conference, regform, rowdata, moderate=False, notify=False):
         url = urljoin(
             self.urlbase,
