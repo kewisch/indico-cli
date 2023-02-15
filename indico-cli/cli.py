@@ -4,15 +4,21 @@ import http.client
 import json
 import logging
 import sys
+from datetime import datetime
 
 import keyring
 from arghandler import ArgumentHandler, subcmd
+from dateutil.parser import parse as dateparse
 from indico import Indico
 from progress.bar import Bar
 from progress.spinner import Spinner
 
 INDICO_PROD_URL = "https://events.canonical.com"  # prod
 INDICO_STAGE_URL = "https://events.staging.canonical.com"  # staging
+
+
+class IndicoCliException(Exception):
+    pass
 
 
 def init_logging(level, _):
@@ -26,17 +32,76 @@ def init_logging(level, _):
         http.client.HTTPConnection.debuglevel = 1
 
 
-def setfield(data, fieldkey, fieldvalue):
-    fieldname, fieldtype, *_ = fieldkey.split("|") + [None]
+def setfield(data, fieldvalue, fielddata, autodate=False):
+    fieldname = fielddata["htmlName"]
+    fieldtype = fielddata["inputType"]
 
-    if fieldtype == "BOOL":
+    if fieldtype in ("checkbox", "bool"):
         data[fieldname] = True if fieldvalue.lower() in ("yes", "true", "1") else False
-    elif fieldtype == "CHOICE":
-        data[fieldname] = {fieldvalue: 1}
-    else:
+    elif fieldtype in ("single_choice", "multi_choice", "accommodation"):
+
+        choices = fieldvalue.split(",") if fieldtype == "multi_choice" else [fieldvalue]
+        datavalue = {}
+
+        for choice in choices:
+            if len(choice):
+                if choice not in fielddata["rev_captions"]:
+                    raise IndicoCliException(
+                        "Couldn't find choice {} for field '{}'".format(
+                            choice, fielddata["title"]
+                        )
+                    )
+                datavalue[fielddata["rev_captions"][choice]] = 1
+
+        data[fieldname] = datavalue
+    elif fieldtype == "country":
+        found = False
+        for val in fielddata["choices"]:
+            if val["caption"] == fieldvalue:
+                data[fieldname] = val["countryKey"]
+                found = True
+                break
+
+        if not found:
+            raise IndicoCliException("Could not find country " + fieldvalue)
+
+    elif fieldtype in ("textarea", "text", "phone"):
         data[fieldname] = fieldvalue
+    elif fieldtype == "email":
+        pass  # This is the key, never set it
+    elif fieldtype == "date":
+        if autodate:
+            data[fieldname] = dateparse(fieldvalue).isoformat(timespec="seconds")
+        else:
+            try:
+                data[fieldname] = datetime.fromisoformat(fieldvalue).isoformat(
+                    timespec="seconds"
+                )
+            except ValueError:
+                raise IndicoCliException(
+                    "Invalid date format '{}', use --autodate or correct the CSV file to use ISO8601 yyyy-mm-ddThh:mm:ss".format(
+                        fieldvalue
+                    )
+                )
+    else:
+        raise IndicoCliException("Unhandled field type: " + fieldtype)
 
     return data
+
+
+def fieldnamemap(fieldinfo):
+    data = {}
+    rawdata = {}
+    for field, fielddata in fieldinfo.items():
+        if fielddata["title"] in data:
+            raise IndicoCliException(
+                "Ambiguous field info, use raw field names instead"
+            )
+        data[fielddata["title"]] = fielddata
+        rawdata[fielddata["htmlName"]] = fielddata
+        if "captions" in fielddata:
+            fielddata["rev_captions"] = {v: k for k, v in fielddata["captions"].items()}
+    return data, rawdata
 
 
 def regidmap(indico, conference):
@@ -72,7 +137,7 @@ def cmd_groupadduser(handler, indico, args):
         if len(groupdata) == 1:
             groupid = groupdata[0]["id"]
         else:
-            raise Exception("Could not find group " + args.group)
+            raise IndicoCliException("Could not find group " + args.group)
 
     userids = set()
     for user in args.user:
@@ -91,92 +156,6 @@ def cmd_groupadduser(handler, indico, args):
     else:
         users.update(userids)
         indico.editgroup(groupid, list(users))
-
-
-@subcmd("regbulk", help="Bulk register users, skipping those already existing")
-def cmd_regbulk(handler, indico, args):
-    handler.add_argument(
-        "conference", type=int, help="The id of the conference to edit"
-    )
-    handler.add_argument(
-        "regform", type=int, help="The id of the registration FORM to edit"
-    )
-    handler.add_argument(
-        "--notify", action="store_true", help="Notify the user of the change"
-    )
-    handler.add_argument("csvfile", help="The file with the data")
-    args = handler.parse_args(args)
-
-    cachereg = regidmap(indico, args.conference)
-    allusers = []
-
-    with open(args.csvfile, newline="") as csvfile:
-        reader = csv.DictReader(csvfile)
-
-        extrafields = reader.fieldnames.copy()
-        if "firstname" in extrafields:
-            extrafields.remove("firstname")
-        if "lastname" in extrafields:
-            extrafields.remove("lastname")
-        if "affiliation" in extrafields:
-            extrafields.remove("affiliation")
-        if "email" in extrafields:
-            extrafields.remove("email")
-        if "position" in extrafields:
-            extrafields.remove("position")
-
-        csvdatain = list(reader)
-
-    # First pass, find users that are not yet registered and register them using a CSV import
-    for row in csvdatain:
-        if "email" not in row:
-            raise Exception("CSV file at least requires an email address as key")
-        if (
-            row["email"] not in cachereg
-            and "firstname" in row
-            and "lastname" in row
-            and "affiliation" in row
-            and "position" in row
-        ):
-            allusers.append(
-                [
-                    row["firstname"],
-                    row["lastname"],
-                    row["affiliation"],
-                    row["position"],
-                    "",  # Phone number, we'll likely never needs this
-                    row["email"],
-                ]
-            )
-        elif row["email"] not in cachereg:
-            raise Exception("User {} is not yet registered".format(row["email"]))
-
-    if len(allusers) > 0:
-        with Spinner("Registering {} new users".format(len(allusers))) as spinner:
-            indico.regcsvimport(
-                args.conference, args.regform, allusers, notify=args.notify
-            )
-            spinner.next()
-
-        # Reload cache to get new reg ids
-        cachereg = regidmap(indico, args.conference)
-
-    # For any extra fields, update the registrations with the new data
-    if len(extrafields):
-        with Bar("Updating user data", max=len(csvdatain)) as bar:
-            for row in csvdatain:
-                regid = cachereg[row["email"]]
-                data = {}
-                for field in extrafields:
-                    setfield(data, field, row[field])
-
-                try:
-                    indico.regedit(
-                        args.conference, args.regform, regid, data, notify=args.notify
-                    )
-                except Exception as e:
-                    print(regid, "FAILED", e)
-                bar.next()
 
 
 @subcmd("regedit", help="Edit a user registration")
@@ -276,37 +255,17 @@ def cmd_regfields(handler, indico, args):
     args = handler.parse_args(args)
 
     data = indico.regfields(args.conference, args.regform)
-    for field, title in data.items():
-        print("{0:<12}: {1}".format(field, title))
-
-    print(
-        """
-        With this information you can create the heading for the CSV file.
-        When you are registering new users, you need to have the following fields:
-          * firstname
-          * lastname
-          * affiliation      (This is the company, e.g. Canonical)
-          * position         (This is used for the team)
-          * email
-
-        email,firstname,lastname,affiliation,position,field_85,field_234|BOOL,field_233|BOOL,field_235|BOOL
-        user@example.com,John,Doe,Canonical,Community,REQ-123123,yes,yes,no
-        user2@example.com,Jane,Doe,Canonical,MAAS,REQ-232324,no,yes,no
-
-        If you are certain those users are already registered, you can provide just the email field.
-
-        email,field_234|BOOL,field_233|BOOL,field_235|BOOL
-        user@example.com,yes,yes,no
-        user2@example.com,no,yes,no
-
-        What is easy to set at this point is text fields and Yes/No choices. Setting fields that
-        have multiple choices such as shirt size require some additional code I haven't written
-
-        Then run:
-
-        pipenv run cli regbulk <conference> <regform> mycsvfile.csv
-    """
-    )
+    for field, data in data.items():
+        if not data["isEnabled"]:
+            continue
+        print(
+            "{0:<12}: {1} ({2}) ".format(
+                data["htmlName"], data["title"], data["inputType"]
+            )
+        )
+        if "captions" in data:
+            for uid, caption in data["captions"].items():
+                print("\t{}: {}".format(uid, caption))
 
 
 @subcmd("regeditcsv", help="Bulk edit user registration via csv")
@@ -318,41 +277,121 @@ def cmd_regeditcsv(handler, indico, args):
         "regform", type=int, help="The id of the registration FORM to edit"
     )
     handler.add_argument(
+        "--register", action="store_true", help="Register users if they don't exist"
+    )
+    handler.add_argument(
+        "--autodate", action="store_true", help="Automatically parse date formats"
+    )
+    handler.add_argument(
+        "--rawfields",
+        action="store_true",
+        help="Assume the CSV is using raw field names",
+    )
+    handler.add_argument(
         "--notify", action="store_true", help="Notify the user of the change"
     )
     handler.add_argument("csvfile", help="The file with the data")
     args = handler.parse_args(args)
 
+    print("Loading field and registration data...", end="", flush=True)
+    fieldinfo = indico.regfields(args.conference, args.regform)
+    fieldmap, rawfieldmap = fieldnamemap(fieldinfo)
+    if args.rawfields:
+        fieldmap = rawfieldmap
+    cachereg = regidmap(indico, args.conference)
+    print("Done")
+
+    fieldnames = None
+    rows = None
+    registerusers = {}
+
+    def lookupfield(name):
+        return rawfieldmap[name]["htmlName" if args.rawfields else "title"]
+
+    emailfield = lookupfield("email")
+
     with open(args.csvfile, newline="") as csvfile:
         reader = csv.DictReader(csvfile)
-        cachereg = None
-        if "email" not in reader.fieldnames and "regid" not in reader.fieldnames:
-            raise Exception("Missing email or reg id in reg file")
-        if "regid" not in reader.fieldnames:
-            cachereg = dict(
-                map(
-                    lambda row: (row["personal_data"]["email"], row["registrant_id"]),
-                    indico.get_registrations(args.conference),
-                )
-            )
+        if lookupfield("email") not in reader.fieldnames:
+            raise IndicoCliException("Missing email in csv file")
+        fieldnames = reader.fieldnames
+        rows = list(reader)
 
-        with Bar("Setting fields", max=len(args.regid)) as bar:
-            for row in reader:
-                regid = row["regid"] if "regid" in row else cachereg[row["email"]]
+    if args.register:
+        for row in rows:
+            if row[emailfield] not in cachereg:
+                if lookupfield("first_name") in row and lookupfield("last_name") in row:
+                    registerusers[row[lookupfield("email")]] = [
+                        row[lookupfield("first_name")],
+                        row[lookupfield("last_name")],
+                        row[lookupfield("affiliation")]
+                        if lookupfield("affiliation") in row
+                        else "",
+                        row[lookupfield("position")]
+                        if lookupfield("position") in row
+                        else "",
+                        row[lookupfield("phone")]
+                        if lookupfield("phone") in row
+                        else "",
+                        row[emailfield],
+                    ]
+                else:
+                    raise IndicoCliException(
+                        (
+                            "User {} is not previously registered, CSV requires at "
+                            + "least email, firstname and lastname fields, preferably also "
+                            + "affiliation, position (team)"
+                        ).format(row[emailfield])
+                    )
+        if len(registerusers) > 0:
+            with Spinner(
+                "Registering {} new users".format(len(registerusers))
+            ) as spinner:
+                indico.regcsvimport(
+                    args.conference,
+                    args.regform,
+                    registerusers.values(),
+                    notify=args.notify,
+                )
+                spinner.next()
+
+                # Reload cache to get new reg ids
+                cachereg = regidmap(indico, args.conference)
+                spinner.next()
+
+    with Bar("Setting fields", max=len(rows)) as bar:
+        for row in rows:
+            try:
+                if row[emailfield] not in cachereg:
+                    raise IndicoCliException(
+                        "User is not registered, use --register if needed"
+                    )
+                regid = cachereg[row[emailfield]]
 
                 data = {}
-                for field in reader.fieldnames:
-                    if field == "email" and "regid" not in row:
+                for field in fieldnames:
+                    if field == emailfield:
                         continue
-                    setfield(data, field, row[field])
-
-                try:
-                    indico.regedit(
-                        args.conference, args.regform, regid, data, args.notify
-                    )
-                except Exception as e:
-                    print(regid, "FAILED", e)
-                bar.next()
+                    if row[emailfield] in registerusers and fieldmap[field][
+                        "htmlName"
+                    ] in (
+                        "first_name",
+                        "last_name",
+                        "affiliation",
+                        "position",
+                        "phone",
+                    ):
+                        # Skip fields that were set as part of the user registration
+                        continue
+                    if field not in fieldmap:
+                        raise IndicoCliException(
+                            "Could not find registration field: " + field
+                        )
+                    setfield(data, row[field], fieldmap[field], autodate=args.autodate)
+                indico.regedit(args.conference, args.regform, regid, data, args.notify)
+            except IndicoCliException as e:
+                print("\r" + row[emailfield], "FAILED: ", e)
+            bar.next()
 
 
 @subcmd("submitcheck", help="Check if all contributors have the submitter bit set")

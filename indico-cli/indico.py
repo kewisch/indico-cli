@@ -42,8 +42,8 @@ class Indico:
 
         if not ignore_code and r.status_code != expect_code:
             raise Exception(
-                "Request for {} {} failed with {}".format(
-                    args[0], args[1], r.status_code
+                "Request for {} {} failed with {}: {}".format(
+                    args[0], args[1], r.status_code, r.text
                 )
             )
 
@@ -126,13 +126,17 @@ class Indico:
             raise Exception("Unexpected response")
 
     def regfields(self, conference, regform):
+
         url = urljoin(
             self.urlbase,
-            "/event/{}/manage/registration/{}/display".format(conference, regform),
+            "/event/{}/manage/registration/{}/form/".format(conference, regform),
         )
         r = self._request("GET", url)
-        data = r.json()
-        doc = lxml.html.document_fromstring(data["html"])
+        doc = lxml.html.document_fromstring(r.text)
+
+        node = doc.cssselect("#registration-form-setup-container")[0]
+        data = json.loads(node.attrib["data-form-data"])
+        return data["items"]
 
         data = {
             "firstname": "First name",
