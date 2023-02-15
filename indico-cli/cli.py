@@ -53,7 +53,7 @@ def cmd_groupadduser(handler, indico, args):
 
     users = set(indico.getgroupusers(groupid))
     if userids.issubset(users):
-        print("All users already in group {}".format(args.group))
+        print(f"All users already in group {args.group}")
     else:
         users.update(userids)
         indico.editgroup(groupid, list(users))
@@ -119,7 +119,7 @@ def cmd_regedit(handler, indico, args):
                 )
             )
         except KeyError as e:
-            print("{} not found".format(e.args[0]))
+            print(f"{e.args[0]} not found")
             sys.exit(1)
         print("Done")
 
@@ -133,9 +133,9 @@ def cmd_regedit(handler, indico, args):
                 setfield(data, value, fieldmap[key], autodate=args.autodate)
             indico.regedit(args.conference, args.regform, regid, data, args.notify)
         except IndicoCliException as e:
-            tqdm.write("{} FAILED: {}".format(regid, e))
+            tqdm.write(f"{row[emailfield]} FAILED: {e}")
         except Exception as e:
-            tqdm.write("{} FAILED: {}: {}".format(regid, type(e).__name__, e))
+            tqdm.write(f"{row[emailfield]} FAILED: {type(e).__name__}: {e}")
 
 
 @subcmd("regfields", help="Get field names for CSV import")
@@ -149,17 +149,20 @@ def cmd_regfields(handler, indico, args):
     args = handler.parse_args(args)
 
     data = indico.regfields(args.conference, args.regform)
+    print("When putting together the CSV file for import, use the Name of the field as")
+    print("the column header. You will only need the ID if you are using --rawfields\n")
     for field, data in data.items():
         if not data["isEnabled"]:
             continue
+
         print(
-            "{0:<12}: {1} ({2}) ".format(
-                data["htmlName"], data["title"], data["inputType"]
-            )
+            f"     ID: {data['htmlName']:<10}   Type: {data['inputType']:<20} Name: {data['title']}"
         )
         if "captions" in data:
+            print("         Choices:")
             for uid, caption in data["captions"].items():
-                print("\t{}: {}".format(uid, caption))
+                print(f"           {caption} ({uid})")
+            print("\n")
 
 
 @subcmd("regeditcsv", help="Bulk edit user registration via csv")
@@ -229,18 +232,12 @@ def cmd_regeditcsv(handler, indico, args):
                     ]
                 else:
                     raise IndicoCliException(
-                        (
-                            "User {} is not previously registered, CSV requires at "
-                            + "least email, firstname and lastname fields, preferably also "
-                            + "affiliation, position (team)"
-                        ).format(row[emailfield])
+                        f"User {row[emailfield]} is not previously registered, CSV requires at "
+                        + "least email, firstname and lastname fields, preferably also "
+                        + "affiliation, position (team)"
                     )
         if len(registerusers) > 0:
-            print(
-                "Registering {} new users...".format(len(registerusers)),
-                end="",
-                flush=True,
-            )
+            print(f"Registering {len(registerusers)} new users...", end="", flush=True)
             indico.regcsvimport(
                 args.conference,
                 args.regform,
@@ -281,9 +278,9 @@ def cmd_regeditcsv(handler, indico, args):
                 setfield(data, row[field], fieldmap[field], autodate=args.autodate)
             indico.regedit(args.conference, args.regform, regid, data, args.notify)
         except IndicoCliException as e:
-            tqdm.write("{} FAILED: {}".format(row[emailfield], e))
+            tqdm.write(f"{row[emailfield]} FAILED: {e}")
         except Exception as e:
-            tqdm.write("{} FAILED: {}: {}".format(row[emailfield], type(e).__name__, e))
+            tqdm.write(f"{row[emailfield]} FAILED: {type(e).__name__}: {e}")
 
 
 @subcmd("submitcheck", help="Check if all contributors have the submitter bit set")
@@ -394,7 +391,7 @@ def main():
     def load_context(args):
         token = keyring.get_password("indico", "token." + args.env)
         if token is None:
-            token = getpass.getpass("Enter token for {}: ".format(args.env))
+            token = getpass.getpass(f"Enter token for {args.env}: ")
             keyring.set_password("indico", "token." + args.env, token)
 
         if args.env == "prod":
