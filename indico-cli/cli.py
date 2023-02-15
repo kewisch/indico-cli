@@ -4,14 +4,13 @@ import http.client
 import json
 import logging
 import sys
-from datetime import datetime
-
 import keyring
+
 from arghandler import ArgumentHandler, subcmd
 from dateutil.parser import parse as dateparse
 from indico import Indico
-from progress.bar import Bar
-from progress.spinner import Spinner
+from tqdm import tqdm
+from datetime import datetime
 
 INDICO_PROD_URL = "https://events.canonical.com"  # prod
 INDICO_STAGE_URL = "https://events.staging.canonical.com"  # staging
@@ -225,23 +224,21 @@ def cmd_regedit(handler, indico, args):
             sys.exit(1)
         print("Done")
 
-    with Bar("Setting fields", max=len(args.regid)) as bar:
-        for regid in args.regid:
-            data = {}
-            for key, value in args.settext:
-                data[key] = value
+    for regid in tqdm(args.regid, desc="Setting fields", unit="users"):
+        data = {}
+        for key, value in args.settext:
+            data[key] = value
 
-            for key, value in args.setbool:
-                data[key] = True if value.lower() in ("yes", "true", "1") else False
+        for key, value in args.setbool:
+            data[key] = True if value.lower() in ("yes", "true", "1") else False
 
-            for key, value in args.setchoice:
-                data[key] = {value: 1}
+        for key, value in args.setchoice:
+            data[key] = {value: 1}
 
-            try:
-                indico.regedit(args.conference, args.regform, regid, data, args.notify)
-            except Exception as e:
-                print(regid, "FAILED", e)
-            bar.next()
+        try:
+            indico.regedit(args.conference, args.regform, regid, data, args.notify)
+        except Exception as e:
+            print(regid, "FAILED", e)
 
 
 @subcmd("regfields", help="Get field names for CSV import")
@@ -344,54 +341,52 @@ def cmd_regeditcsv(handler, indico, args):
                         ).format(row[emailfield])
                     )
         if len(registerusers) > 0:
-            with Spinner(
-                "Registering {} new users".format(len(registerusers))
-            ) as spinner:
-                indico.regcsvimport(
-                    args.conference,
-                    args.regform,
-                    registerusers.values(),
-                    notify=args.notify,
+            print("Registering {} new users...".format(len(registerusers)), end="", flush=True)
+            indico.regcsvimport(
+                args.conference,
+                args.regform,
+                registerusers.values(),
+                notify=args.notify,
+            )
+            print("Done")
+            print("Reloading registration cache...", end="", flush=True)
+            # Reload cache to get new reg ids
+            cachereg = regidmap(indico, args.conference)
+            print("Done")
+
+    for row in tqdm(rows, desc="Setting fields", unit="users"):
+        try:
+            if row[emailfield] not in cachereg:
+                raise IndicoCliException(
+                    "User is not registered, use --register if needed"
                 )
-                spinner.next()
+            regid = cachereg[row[emailfield]]
 
-                # Reload cache to get new reg ids
-                cachereg = regidmap(indico, args.conference)
-                spinner.next()
-
-    with Bar("Setting fields", max=len(rows)) as bar:
-        for row in rows:
-            try:
-                if row[emailfield] not in cachereg:
+            data = {}
+            for field in fieldnames:
+                if field == emailfield:
+                    continue
+                if row[emailfield] in registerusers and fieldmap[field][
+                    "htmlName"
+                ] in (
+                    "first_name",
+                    "last_name",
+                    "affiliation",
+                    "position",
+                    "phone",
+                ):
+                    # Skip fields that were set as part of the user registration
+                    continue
+                if field not in fieldmap:
                     raise IndicoCliException(
-                        "User is not registered, use --register if needed"
+                        "Could not find registration field: " + field
                     )
-                regid = cachereg[row[emailfield]]
-
-                data = {}
-                for field in fieldnames:
-                    if field == emailfield:
-                        continue
-                    if row[emailfield] in registerusers and fieldmap[field][
-                        "htmlName"
-                    ] in (
-                        "first_name",
-                        "last_name",
-                        "affiliation",
-                        "position",
-                        "phone",
-                    ):
-                        # Skip fields that were set as part of the user registration
-                        continue
-                    if field not in fieldmap:
-                        raise IndicoCliException(
-                            "Could not find registration field: " + field
-                        )
-                    setfield(data, row[field], fieldmap[field], autodate=args.autodate)
-                indico.regedit(args.conference, args.regform, regid, data, args.notify)
-            except IndicoCliException as e:
-                print("\r" + row[emailfield], "FAILED: ", e)
-            bar.next()
+                setfield(data, row[field], fieldmap[field], autodate=args.autodate)
+            indico.regedit(args.conference, args.regform, regid, data, args.notify)
+        except IndicoCliException as e:
+            tqdm.write("{} FAILED: {}".format(row[emailfield], e))
+        except Exception as e:
+            tqdm.write("{} FAILED: {}: {}".format(row[emailfield], type(e).__name__,  e))
 
 
 @subcmd("submitcheck", help="Check if all contributors have the submitter bit set")

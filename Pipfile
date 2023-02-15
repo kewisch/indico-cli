@@ -10,9 +10,9 @@ cssselect = "*"
 python-dateutil = "*"
 arghandler = "*"
 keyring = "*"
-progress = "*"
 pydbus = { version = "*", sys_platform = "== 'linux'" }
 SecretStorage = { version = "*", sys_platform = "== 'linux'" }
+tqdm = "*"
 
 [dev-packages]
 black = "*"
