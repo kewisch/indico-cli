@@ -355,8 +355,14 @@ def cmd_swap(handler, indico, args):
 
 @subcmd("cleartoken", help="Clear indico tokens")
 def cmd_cleartoken(handler, indico, args):
-    keyring.delete_password("indico", "token.stage")
-    keyring.delete_password("indico", "token.prod")
+    try:
+        keyring.delete_password("indico", "token.stage")
+    except keyring.errors.PasswordDeleteError:
+        pass
+    try:
+        keyring.delete_password("indico", "token.prod")
+    except keyring.errors.PasswordDeleteError:
+        pass
     print("Tokens have been cleared")
 
 
