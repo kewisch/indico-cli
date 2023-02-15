@@ -11,6 +11,8 @@ python-dateutil = "*"
 arghandler = "*"
 keyring = "*"
 progress = "*"
+pydbus = { version = "*", sys_platform = "== 'linux'" }
+SecretStorage = { version = "*", sys_platform = "== 'linux'" }
 
 [dev-packages]
 black = "*"
