@@ -4,13 +4,13 @@ import http.client
 import json
 import logging
 import sys
-import keyring
+from datetime import datetime
 
+import keyring
 from arghandler import ArgumentHandler, subcmd
 from dateutil.parser import parse as dateparse
 from indico import Indico
 from tqdm import tqdm
-from datetime import datetime
 
 INDICO_PROD_URL = "https://events.canonical.com"  # prod
 INDICO_STAGE_URL = "https://events.staging.canonical.com"  # staging
@@ -64,7 +64,7 @@ def setfield(data, fieldvalue, fielddata, autodate=False):
         if not found:
             raise IndicoCliException("Could not find country " + fieldvalue)
 
-    elif fieldtype in ("textarea", "text", "phone"):
+    elif fieldtype in ("textarea", "text", "phone", "number"):
         data[fieldname] = fieldvalue
     elif fieldtype == "email":
         pass  # This is the key, never set it
@@ -88,7 +88,7 @@ def setfield(data, fieldvalue, fielddata, autodate=False):
     return data
 
 
-def fieldnamemap(fieldinfo):
+def fieldnamemap(fieldinfo, rawfields):
     data = {}
     rawdata = {}
     for field, fielddata in fieldinfo.items():
@@ -100,7 +100,11 @@ def fieldnamemap(fieldinfo):
         rawdata[fielddata["htmlName"]] = fielddata
         if "captions" in fielddata:
             fielddata["rev_captions"] = {v: k for k, v in fielddata["captions"].items()}
-    return data, rawdata
+
+    if rawfields:
+        return rawdata, rawdata
+    else:
+        return data, rawdata
 
 
 def regidmap(indico, conference):
@@ -169,39 +173,33 @@ def cmd_regedit(handler, indico, args):
         "regid", nargs="*", help="The registration id or email to edit"
     )
     handler.add_argument(
-        "--setbool",
+        "--set",
+        "-s",
         nargs=2,
+        dest="setfields",
         action="append",
         default=[],
-        metavar=("fieldid", "value"),
-        help="Set a boolean field (yes,true,1 = True ; anything else = False)",
+        metavar=("fieldname", "value"),
+        help="Set a field",
     )
     handler.add_argument(
-        "--settext",
-        nargs=2,
-        action="append",
-        default=[],
-        metavar=("fieldid", "value"),
-        help="Set a text field",
+        "--rawfields",
+        action="store_true",
+        help="Assume the CSV is using raw field names",
     )
     handler.add_argument(
-        "--setchoice",
-        nargs=2,
-        action="append",
-        default=[],
-        metavar=("fieldid", "guid"),
-        help="Set a choice field (guid of choice required)",
+        "--autodate", action="store_true", help="Automatically parse date formats"
     )
     handler.add_argument(
         "--notify", action="store_true", help="Notify the user of the change"
     )
     handler.add_argument(
-        "--all", "-a", action="store_true", help="Set the value on all registrants"
+        "--all", "-a", action="store_true", help="Set the value on all registrants. CAVEAT: this only works with a single registration form"
     )
     args = handler.parse_args(args)
 
     if args.all:
-        print("Retrieving all registration ids", end="", flush=True)
+        print("Retrieving all registration ids...", end="", flush=True)
         args.regid = list(
             map(
                 lambda row: row["registrant_id"],
@@ -224,21 +222,19 @@ def cmd_regedit(handler, indico, args):
             sys.exit(1)
         print("Done")
 
+    fieldinfo = indico.regfields(args.conference, args.regform)
+    fieldmap, rawfieldmap = fieldnamemap(fieldinfo, rawfields=args.rawfields)
     for regid in tqdm(args.regid, desc="Setting fields", unit="users"):
         data = {}
-        for key, value in args.settext:
-            data[key] = value
-
-        for key, value in args.setbool:
-            data[key] = True if value.lower() in ("yes", "true", "1") else False
-
-        for key, value in args.setchoice:
-            data[key] = {value: 1}
 
         try:
+            for key, value in args.setfields:
+                setfield(data, value, fieldmap[key], autodate=args.autodate)
             indico.regedit(args.conference, args.regform, regid, data, args.notify)
+        except IndicoCliException as e:
+            tqdm.write("{} FAILED: {}".format(regid, e))
         except Exception as e:
-            print(regid, "FAILED", e)
+            tqdm.write("{} FAILED: {}: {}".format(regid, type(e).__name__, e))
 
 
 @subcmd("regfields", help="Get field names for CSV import")
@@ -292,9 +288,7 @@ def cmd_regeditcsv(handler, indico, args):
 
     print("Loading field and registration data...", end="", flush=True)
     fieldinfo = indico.regfields(args.conference, args.regform)
-    fieldmap, rawfieldmap = fieldnamemap(fieldinfo)
-    if args.rawfields:
-        fieldmap = rawfieldmap
+    fieldmap, rawfieldmap = fieldnamemap(fieldinfo, args.rawfields)
     cachereg = regidmap(indico, args.conference)
     print("Done")
 
@@ -341,7 +335,11 @@ def cmd_regeditcsv(handler, indico, args):
                         ).format(row[emailfield])
                     )
         if len(registerusers) > 0:
-            print("Registering {} new users...".format(len(registerusers)), end="", flush=True)
+            print(
+                "Registering {} new users...".format(len(registerusers)),
+                end="",
+                flush=True,
+            )
             indico.regcsvimport(
                 args.conference,
                 args.regform,
@@ -366,9 +364,7 @@ def cmd_regeditcsv(handler, indico, args):
             for field in fieldnames:
                 if field == emailfield:
                     continue
-                if row[emailfield] in registerusers and fieldmap[field][
-                    "htmlName"
-                ] in (
+                if row[emailfield] in registerusers and fieldmap[field]["htmlName"] in (
                     "first_name",
                     "last_name",
                     "affiliation",
@@ -386,7 +382,7 @@ def cmd_regeditcsv(handler, indico, args):
         except IndicoCliException as e:
             tqdm.write("{} FAILED: {}".format(row[emailfield], e))
         except Exception as e:
-            tqdm.write("{} FAILED: {}: {}".format(row[emailfield], type(e).__name__,  e))
+            tqdm.write("{} FAILED: {}: {}".format(row[emailfield], type(e).__name__, e))
 
 
 @subcmd("submitcheck", help="Check if all contributors have the submitter bit set")
