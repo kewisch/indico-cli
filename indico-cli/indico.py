@@ -42,9 +42,7 @@ class Indico:
 
         if not ignore_code and r.status_code != expect_code:
             raise Exception(
-                "Request for {} {} failed with {}: {}".format(
-                    args[0], args[1], r.status_code, r.text
-                )
+                f"Request for {args[0]} {args[1]} failed with {r.status_code}: {r.text}"
             )
 
         return r
@@ -84,7 +82,7 @@ class Indico:
         return r.json()["users"]
 
     def getgroupusers(self, group):
-        url = urljoin(self.urlbase, "/admin/groups/indico/{}/members".format(group))
+        url = urljoin(self.urlbase, f"/admin/groups/indico/{group}/members")
         r = self._request("GET", url)
 
         data = r.json()
@@ -98,14 +96,14 @@ class Indico:
 
     def editgroup(self, group, members):
         data = {"members": json.dumps(list(map(lambda u: "User:" + str(u), members)))}
-        url = urljoin(self.urlbase, "/admin/groups/indico/{}/edit".format(group))
+        url = urljoin(self.urlbase, f"/admin/groups/indico/{group}/edit")
         r = self._request("POST", url, data=data, expect_code=302)
 
         if r.headers["location"] != "/admin/groups/":
             raise Exception("Unexpected response")
 
     def get_registrations(self, conference):
-        url = urljoin(self.urlbase, "/api/events/{}/registrants".format(conference))
+        url = urljoin(self.urlbase, f"/api/events/{conference}/registrants")
         r = self._request("GET", url)
         return r.json()["registrants"]
 
@@ -115,9 +113,7 @@ class Indico:
 
         url = urljoin(
             self.urlbase,
-            "/event/{}/manage/registration/{}/registrations/{}/edit".format(
-                conference, regform, regid
-            ),
+            f"/event/{conference}/manage/registration/{regform}/registrations/{regid}/edit",
         )
         r = self._request("POST", url, json=data)
 
@@ -129,7 +125,7 @@ class Indico:
 
         url = urljoin(
             self.urlbase,
-            "/event/{}/manage/registration/{}/form/".format(conference, regform),
+            f"/event/{conference}/manage/registration/{regform}/form/",
         )
         r = self._request("GET", url)
         doc = lxml.html.document_fromstring(r.text)
@@ -157,9 +153,7 @@ class Indico:
     def regcsvimport(self, conference, regform, rowdata, moderate=False, notify=False):
         url = urljoin(
             self.urlbase,
-            "/event/{}/manage/registration/{}/registrations/import".format(
-                conference, regform
-            ),
+            f"/event/{conference}/manage/registration/{regform}/registrations/import",
         )
 
         csvout = io.StringIO()
@@ -185,20 +179,18 @@ class Indico:
 
         if r.status_code != 200:
             print(r.text)
-            raise Exception("Request failed with {}".format(r.status_code))
+            raise Exception(f"Request failed with {r.status_code}")
 
     def get_contributions(self, conference):
         # with open("contributions.json", "r") as gp:
         #    return json.load(gp)
         params = {"detail": "contributions"}
-        url = urljoin(self.urlbase, "/export/event/{}.json".format(conference))
+        url = urljoin(self.urlbase, f"/export/event/{conference}.json")
         r = self._request("GET", url, params=params)
         return r.json()
 
     def get_contribution_entry(self, conference, cid):
-        url = urljoin(
-            self.urlbase, "/event/{}/contributions/{}.json".format(conference, cid)
-        )
+        url = urljoin(self.urlbase, f"/event/{conference}/contributions/{cid}.json")
         r = self._request("GET", url)
         return r.json()
 
@@ -233,17 +225,14 @@ class Indico:
                         person["name"],
                         urljoin(
                             self.urlbase,
-                            "/event/{}/contributions/{}".format(
-                                conference, centry["db_id"]
-                            ),
+                            f"/event/{conference}/contributions/{centry['db_id']}",
                         ),
                     )
                     break
 
     def get_contribution_edit_entry(self, conference, cid):
         url = urljoin(
-            self.urlbase,
-            "/event/{}/manage/contributions/{}/edit".format(conference, cid),
+            self.urlbase, f"/event/{conference}/manage/contributions/{cid}/edit"
         )
         params = {"standalone": 1, "_": int(time.time())}
         r = self._request("GET", url, params=params)
@@ -262,7 +251,7 @@ class Indico:
         # with open("timetable.json", "r") as gp:
         #    return json.load(gp)
 
-        url = urljoin(self.urlbase, "/export/timetable/{}.json".format(conference))
+        url = urljoin(self.urlbase, f"/export/timetable/{conference}.json")
         r = self._request("GET", url)
         return r.json()
 
@@ -331,18 +320,7 @@ class Indico:
             for entry in sentries[1:]:
                 if time_int2(entry[0]) < time_int2(lastentry[1]):
                     print(
-                        "\tConflict:",
-                        entry[2]
-                        + " @"
-                        + entry[0]
-                        + " - "
-                        + entry[1]
-                        + " vs "
-                        + lastentry[2]
-                        + " @"
-                        + lastentry[0]
-                        + " - "
-                        + lastentry[1],
+                        f"\tConflict: {entry[2]} @{entry[0]} - {entry[1]} vs {lastentry[2]} @{lastentry[0]} - {lastentry[1]}"
                     )
                 lastentry = entry
 
@@ -352,27 +330,13 @@ class Indico:
             for entry in sentries[1:]:
                 if time_int2(entry[0]) < time_int2(lastentry[1]):
                     print(
-                        "\tTime/Room Conflict in ",
-                        room,
-                        ":",
-                        entry[2]
-                        + " @"
-                        + entry[0]
-                        + " - "
-                        + entry[1]
-                        + " vs "
-                        + lastentry[2]
-                        + " @"
-                        + lastentry[0]
-                        + " - "
-                        + lastentry[1],
+                        f"\tTime/Room Conflict in {room}: {entry[2]} @{entry[0]} - {entry[1]} vs {lastentry[2]} @{lastentry[0]} - {lastentry[1]}"
                     )
                 lastentry = entry
 
     def convert_timetable_to_contrib(self, conference, cid):
         url = urljoin(
-            self.urlbase,
-            "/event/{}/manage/timetable/entry/{}/info".format(conference, cid),
+            self.urlbase, f"/event/{conference}/manage/timetable/entry/{cid}/info"
         )
         r = self._request("GET", url)
 
@@ -395,10 +359,8 @@ class Indico:
         return entries
 
     def get_timetable_edit_entry(self, conference, cid):
-
         url = urljoin(
-            self.urlbase,
-            "/event/{}/manage/timetable/entry/{}/edit/".format(conference, cid),
+            self.urlbase, f"/event/{conference}/manage/timetable/entry/{cid}/edit/"
         )
         r = self._request("GET", url)
 
@@ -414,8 +376,7 @@ class Indico:
 
     def edit_timetable_entry(self, conference, cid, entry):
         url = urljoin(
-            self.urlbase,
-            "/event/{}/manage/timetable/entry/{}/edit/".format(conference, cid),
+            self.urlbase, f"/event/{conference}/manage/timetable/entry/{cid}/edit/"
         )
 
         entry["person_link_data"] = json.dumps(entry["person_link_data"])
@@ -427,8 +388,7 @@ class Indico:
 
     def move_timetable(self, conference, tid, day, parent=None):
         url = urljoin(
-            self.urlbase,
-            "/event/{}/manage/timetable/entry/{}/move".format(conference, tid),
+            self.urlbase, f"/event/{conference}/manage/timetable/entry/{tid}/move"
         )
         data = {"day": day}
 
@@ -441,9 +401,7 @@ class Indico:
     def change_time(self, conference, contribution, startDate, endDate):
         url = urljoin(
             self.urlbase,
-            "/event/{}/manage/timetable/entry/{}/edit/datetime".format(
-                conference, contribution
-            ),
+            f"/event/{conference}/manage/timetable/entry/{contribution}/edit/datetime",
         )
         data = {"startDate": startDate, "endDate": endDate}
 
@@ -468,11 +426,9 @@ class Indico:
         editEntryB = self.get_timetable_edit_entry(conference, timetableIDB)
 
         if editEntryA["duration"] != editEntryB["duration"]:
-            print(
-                "Error: Mismatch in duration ({} vs {})".format(
-                    int(editEntryA["duration"]) / 60, int(editEntryB["duration"]) / 60
-                )
-            )
+            durA = int(editEntryA["duration"]) / 60
+            durB = int(editEntryB["duration"]) / 60
+            print(f"Error: Mismatch in duration ({durA} vs {durB})")
             return
 
         editEntryA["location_data"], editEntryB["location_data"] = (
@@ -501,15 +457,10 @@ class Indico:
 
         while True:
             params["page"] = current_page
-            url = urljoin(
-                self.urlbase, "/event/{}/manage/logs/api/logs".format(conference)
-            )
+            url = urljoin(self.urlbase, f"/event/{conference}/manage/logs/api/logs")
             r = self._request("GET", url, params=params)
             data = r.json()
-            print(
-                "page {} total {}".format(current_page, data["pages"][-1]),
-                file=sys.stderr,
-            )
+            print(f"page {current_page} total {data['pages'][-1]}", file=sys.stderr)
 
             entries.extend(data["entries"])
             for entry in data["entries"]:
@@ -519,16 +470,13 @@ class Indico:
                 break
 
             current_page += 1
-            print(recipients)
 
         return recipients
 
     def contributions_link(self, conference, contribId, link, title):
         url = urljoin(
             self.urlbase,
-            "/event/{}/manage/contributions/{}/attachments/add/link".format(
-                conference, contribId
-            ),
+            "/event/{conference}/manage/contributions/{contribId}/attachments/add/link",
         )
         params = {"link_url": link, "title": title, "folder": "__None", "acl": "[]"}
         r = self._request_json("POST", url, data=params)

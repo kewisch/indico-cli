@@ -133,9 +133,9 @@ def cmd_regedit(handler, indico, args):
                 setfield(data, value, fieldmap[key], autodate=args.autodate)
             indico.regedit(args.conference, args.regform, regid, data, args.notify)
         except IndicoCliException as e:
-            tqdm.write(f"{row[emailfield]} FAILED: {e}")
+            tqdm.write(f"{args.regid} FAILED: {e}")
         except Exception as e:
-            tqdm.write(f"{row[emailfield]} FAILED: {type(e).__name__}: {e}")
+            tqdm.write(f"{args.regid} FAILED: {type(e).__name__}: {e}")
 
 
 @subcmd("regfields", help="Get field names for CSV import")
