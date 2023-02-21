@@ -136,6 +136,8 @@ def cmd_regedit(handler, indico, args):
             tqdm.write(f"{args.regid} FAILED: {e}")
         except Exception as e:
             tqdm.write(f"{args.regid} FAILED: {type(e).__name__}: {e}")
+            if logging.getLogger().isEnabledFor(logging.DEBUG):
+                raise e
 
 
 @subcmd("regfields", help="Get field names for CSV import")
@@ -262,6 +264,10 @@ def cmd_regeditcsv(handler, indico, args):
             for field in fieldnames:
                 if field == emailfield:
                     continue
+                if field not in fieldmap:
+                    raise IndicoCliException(
+                        "Could not find registration field: " + field
+                    )
                 if row[emailfield] in registerusers and fieldmap[field]["htmlName"] in (
                     "first_name",
                     "last_name",
@@ -271,16 +277,14 @@ def cmd_regeditcsv(handler, indico, args):
                 ):
                     # Skip fields that were set as part of the user registration
                     continue
-                if field not in fieldmap:
-                    raise IndicoCliException(
-                        "Could not find registration field: " + field
-                    )
                 setfield(data, row[field], fieldmap[field], autodate=args.autodate)
             indico.regedit(args.conference, args.regform, regid, data, args.notify)
         except IndicoCliException as e:
             tqdm.write(f"{row[emailfield]} FAILED: {e}")
         except Exception as e:
             tqdm.write(f"{row[emailfield]} FAILED: {type(e).__name__}: {e}")
+            if logging.getLogger().isEnabledFor(logging.DEBUG):
+                raise e
 
 
 @subcmd("submitcheck", help="Check if all contributors have the submitter bit set")
