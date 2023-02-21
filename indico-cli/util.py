@@ -43,22 +43,27 @@ def setfield(data, fieldvalue, fielddata, autodate=False):
 
         data[fieldname] = datavalue
     elif fieldtype == "country":
-        found = False
-        for val in fielddata["choices"]:
-            if val["caption"] == fieldvalue:
-                data[fieldname] = val["countryKey"]
-                found = True
-                break
+        if fieldvalue == "":
+            data[fieldname] = ""
+        else:
+            found = False
+            for val in fielddata["choices"]:
+                if val["caption"] == fieldvalue:
+                    data[fieldname] = val["countryKey"]
+                    found = True
+                    break
 
-        if not found:
-            raise IndicoCliException("Could not find country " + fieldvalue)
+            if not found:
+                raise IndicoCliException("Could not find country " + fieldvalue)
 
     elif fieldtype in ("textarea", "text", "phone", "number"):
         data[fieldname] = fieldvalue
     elif fieldtype == "email":
         pass  # This is the key, never set it
     elif fieldtype == "date":
-        if autodate:
+        if fieldvalue == "":
+            data[fieldname] = ""
+        elif autodate:
             data[fieldname] = dateparse(fieldvalue).isoformat(timespec="seconds")
         else:
             try:
