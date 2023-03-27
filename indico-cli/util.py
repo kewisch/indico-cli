@@ -1,5 +1,6 @@
 import http.client
 import logging
+from collections.abc import Mapping
 from datetime import datetime
 
 from dateutil.parser import parse as dateparse
@@ -176,10 +177,35 @@ def fieldnamemap(fieldinfo, rawfields):
         return data, rawdata
 
 
-def regidmap(indico, conference):
-    return dict(
-        map(
-            lambda row: (row["personal_data"]["email"], row["registrant_id"]),
-            indico.get_registrations(conference),
-        )
-    )
+class RegIdMap(Mapping):
+    def __init__(self, indico, conference, noisy=True):
+        super().__init__()
+        self._indico = indico
+        self._conference = conference
+        self._noisy = noisy
+        self._cache = None
+
+    def _ensurecache(self):
+        if not self._cache:
+            if self._noisy:
+                print("Looking up emails...", end="", flush=True)
+            self._cache = dict(
+                map(
+                    lambda row: (row["personal_data"]["email"], row["registrant_id"]),
+                    self._indico.get_registrations(self._conference),
+                )
+            )
+            if self._noisy:
+                print("Done")
+
+    def __getitem__(self, key):
+        self._ensurecache()
+        return self._cache[key]
+
+    def __iter__(self):
+        self._ensurecache()
+        return self._cache.__iter__()
+
+    def __len__(self):
+        self._ensurecache()
+        return self._cache.__len__()

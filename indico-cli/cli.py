@@ -8,7 +8,7 @@ import keyring
 from arghandler import ArgumentHandler, subcmd
 from indico import Indico
 from tqdm import tqdm
-from util import IndicoCliException, fieldnamemap, init_logging, regidmap, setfield
+from util import IndicoCliException, RegIdMap, fieldnamemap, init_logging, setfield
 
 INDICO_PROD_URL = "https://events.canonical.com"  # prod
 INDICO_STAGE_URL = "https://events.staging.canonical.com"  # staging
@@ -109,8 +109,7 @@ def cmd_regedit(handler, indico, args):
         )
         print("Done")
     else:
-        print("Looking up emails...", end="", flush=True)
-        cachereg = regidmap(indico, args.conference)
+        cachereg = RegIdMap(indico, args.conference)
         try:
             args.regid = list(
                 map(
@@ -121,7 +120,6 @@ def cmd_regedit(handler, indico, args):
         except KeyError as e:
             print(f"{e.args[0]} not found")
             sys.exit(1)
-        print("Done")
 
     fieldinfo = indico.regfields(args.conference, args.regform)
     fieldmap, rawfieldmap = fieldnamemap(fieldinfo, rawfields=args.rawfields)
@@ -195,7 +193,7 @@ def cmd_regeditcsv(handler, indico, args):
     print("Loading field and registration data...", end="", flush=True)
     fieldinfo = indico.regfields(args.conference, args.regform)
     fieldmap, rawfieldmap = fieldnamemap(fieldinfo, args.rawfields)
-    cachereg = regidmap(indico, args.conference)
+    cachereg = RegIdMap(indico, args.conference, noisy=False)
     print("Done")
 
     fieldnames = None
@@ -247,10 +245,8 @@ def cmd_regeditcsv(handler, indico, args):
                 notify=args.notify,
             )
             print("Done")
-            print("Reloading registration cache...", end="", flush=True)
             # Reload cache to get new reg ids
-            cachereg = regidmap(indico, args.conference)
-            print("Done")
+            cachereg = RegIdMap(indico, args.conference)
 
     for row in tqdm(rows, desc="Setting fields", unit="users"):
         try:
