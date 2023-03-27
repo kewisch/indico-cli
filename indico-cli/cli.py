@@ -208,7 +208,7 @@ def cmd_regeditcsv(handler, indico, args):
     with open(args.csvfile, newline="") as csvfile:
         reader = csv.DictReader(csvfile)
         if lookupfield("email") not in reader.fieldnames:
-            raise IndicoCliException("Missing email in csv file")
+            raise IndicoCliException("Missing Email Address field in csv file")
         fieldnames = reader.fieldnames
         rows = list(reader)
 

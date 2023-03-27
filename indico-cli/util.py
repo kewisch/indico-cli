@@ -75,14 +75,25 @@ def set_accommodation_field(data, fieldvalue, fielddata, autodate=False):
     if fieldtype != "accommodation":
         raise Exception("Wrong field type")
 
+    if not len(fieldvalue):
+        return
+
     data[fieldname] = datavalue = {}
+
     if fieldvalue == "none":
         choicedata = next(
             (choice for choice in fielddata["choices"] if choice["isNoAccommodation"]),
             None,
         )
     else:
-        fromdate, todate, choice = fieldvalue.split(",")
+        fromdate, todate, choice = fieldvalue.split(",", 2)
+        try:
+            pass
+        except ValueError:
+            raise IndicoCliException(
+                f"Format of accommodation field is e.g. '2021-01-01,2021-01-02,Option Name', got '{fieldvalue}'"
+            )
+
         if choice not in fielddata["_rev_captions"]:
             raise IndicoCliException(
                 "Couldn't find choice '{}' for field '{}'".format(
@@ -94,6 +105,10 @@ def set_accommodation_field(data, fieldvalue, fielddata, autodate=False):
             datavalue["arrivalDate"] = parsedate(fromdate, autodate, True)
             datavalue["departureDate"] = parsedate(todate, autodate, True)
 
+            if datavalue["departureDate"] <= datavalue["arrivalDate"]:
+                raise IndicoCliException(
+                    f"Departure date {datavalue['departureDate']} is before or equal to arrival date {datavalue['arrivalDate']}"
+                )
             if datavalue["arrivalDate"] < fielddata["arrivalDateFrom"]:
                 raise IndicoCliException(
                     f"Date {datavalue['arrivalDate']} is before allowed arrival date {fielddata['arrivalDateFrom']}"
