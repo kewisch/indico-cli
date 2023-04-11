@@ -81,6 +81,9 @@ def cmd_regedit(handler, indico, args):
         help="Set a field",
     )
     handler.add_argument(
+        "--allow-email", action="store_true", help="Allow changing the Email field"
+    )
+    handler.add_argument(
         "--rawfields",
         action="store_true",
         help="Assume the CSV is using raw field names",
@@ -128,7 +131,14 @@ def cmd_regedit(handler, indico, args):
 
         try:
             for key, value in args.setfields:
-                setfield(data, value, fieldmap[key], autodate=args.autodate)
+                setfield(
+                    data,
+                    value,
+                    fieldmap[key],
+                    autodate=args.autodate,
+                    allow_email=args.allow_email,
+                )
+
             indico.regedit(args.conference, args.regform, regid, data, args.notify)
         except IndicoCliException as e:
             tqdm.write(f"{args.regid} FAILED: {e}")

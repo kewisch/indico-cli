@@ -44,7 +44,7 @@ def parsedate(fieldvalue, autodate=False, dateonly=False):
         return date.isoformat(timespec="seconds")
 
 
-def setfield(data, fieldvalue, fielddata, autodate=False):
+def setfield(data, fieldvalue, fielddata, autodate=False, allow_email=False):
     fieldname = fielddata["htmlName"]
     fieldtype = fielddata["inputType"]
 
@@ -59,7 +59,8 @@ def setfield(data, fieldvalue, fielddata, autodate=False):
     elif fieldtype in ("textarea", "text", "phone", "number"):
         data[fieldname] = fieldvalue
     elif fieldtype == "email":
-        pass  # This is the key, never set it
+        if allow_email:
+            data[fieldname] = fieldvalue
     elif fieldtype == "date":
         data[fieldname] = parsedate(fieldvalue, autodate)
     else:
