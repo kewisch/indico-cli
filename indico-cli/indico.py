@@ -107,6 +107,34 @@ class Indico:
         r = self._request("GET", url)
         return r.json()["registrants"]
 
+    def query_registration(self, conference, regform, query={}, fields=["email"]):
+        url = urljoin(
+            self.urlbase,
+            f"/event/{conference}/manage/registration/{regform}/registrations/customize",
+        )
+
+        query["visible_items"] = json.dumps(fields)
+        r = self._request("POST", url, data=query)
+        rdata = r.json()
+        doc = lxml.html.document_fromstring(rdata["html"])
+        rows = doc.cssselect("table tbody tr")
+        headers = [th.text_content() for th in doc.cssselect("table thead th")]
+        results = []
+        for row in rows:
+            result = {}
+            for idx, td in enumerate(row.cssselect("td")):
+                if headers[idx] == "Full name":
+                    continue
+                if idx < 2:
+                    continue
+                elif "data-text" in td.attrib:
+                    result[headers[idx]] = td.attrib["data-text"]
+                else:
+                    result[headers[idx]] = td.text_content().strip()
+            results.append(result)
+
+        return results
+
     def regedit(self, conference, regform, regid, customfields={}, notify=False):
         data = customfields.copy()
         data["notify_user"] = notify

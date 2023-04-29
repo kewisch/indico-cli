@@ -60,6 +60,56 @@ def cmd_groupadduser(handler, indico, args):
         indico.editgroup(groupid, list(users))
 
 
+@subcmd("regquery", help="Query registrations by filter")
+def cmd_requery(handler, indico, args):
+    handler.add_argument("conference", type=int, help="The id of the conference")
+    handler.add_argument("regform", type=int, help="The id of the registration FORM")
+    handler.add_argument(
+        "--query",
+        "-q",
+        nargs=2,
+        action="append",
+        default=[],
+        metavar=("fieldname", "value"),
+        help="Query for a certain field value",
+    )
+    handler.add_argument(
+        "--fields", "-f", default="Email Address", help="Comma separated list of fields"
+    )
+
+    handler.add_argument(
+        "--format", default="csv", choices=("csv", "json"), help="Format to output in"
+    )
+    args = handler.parse_args(args)
+    fieldinfo = indico.regfields(args.conference, args.regform)
+    fieldmap, rawfieldmap = fieldnamemap(fieldinfo, False)
+
+    try:
+        fields = list(
+            map(lambda field: fieldmap[field]["htmlName"], args.fields.split(","))
+        )
+        querydict = {fieldmap[key]["htmlName"]: value for key, value in args.query}
+    except KeyError as e:
+        print(f"Unknown field name: {e.args[0]}")
+        sys.exit(1)
+
+    data = indico.query_registration(
+        args.conference, args.regform, query=querydict, fields=fields
+    )
+
+    if args.format == "json":
+        print(json.dumps(data, indent=2))
+    elif args.format == "csv":
+        showheader = len(fields) > 1
+        for row in data:
+            header = list(row.keys())
+            if showheader:
+                print(",".join(header))
+                showheader = False
+
+            print(",".join(row.values()))
+
+
 @subcmd("regedit", help="Edit a user registration")
 def cmd_regedit(handler, indico, args):
     handler.add_argument(
