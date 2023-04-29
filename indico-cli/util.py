@@ -168,6 +168,8 @@ def fieldnamemap(fieldinfo, rawfields):
     data = {}
     rawdata = {}
     for field, fielddata in fieldinfo.items():
+        if not fielddata["isEnabled"]:
+            continue
         if fielddata["title"] in data:
             raise IndicoCliException(
                 "Ambiguous field info, use raw field names instead"

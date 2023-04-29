@@ -12,6 +12,7 @@ from util import IndicoCliException, RegIdMap, fieldnamemap, init_logging, setfi
 
 INDICO_PROD_URL = "https://events.canonical.com"  # prod
 INDICO_STAGE_URL = "https://events.staging.canonical.com"  # staging
+INDICO_LOCAL_URL = "http://localhost:8000"  # local
 
 
 @subcmd("adduser", help="Provsion a user")
@@ -399,6 +400,9 @@ def cmd_contrib_link(handler, indico, args):
 
 def main():
     def load_context(args):
+        if args.env == "staging":
+            args.env == "stage"
+
         token = keyring.get_password("indico", "token." + args.env)
         if token is None:
             token = getpass.getpass(f"Enter token for {args.env}: ")
@@ -408,6 +412,8 @@ def main():
             return Indico(INDICO_PROD_URL, token)
         elif args.env == "stage":
             return Indico(INDICO_STAGE_URL, token)
+        elif args.env == "local":
+            return Indico(INDICO_LOCAL_URL, token)
 
         raise Exception("Invalid environment " + args.env)
 
@@ -415,7 +421,7 @@ def main():
     handler.add_argument(
         "-e",
         "--env",
-        choices=("prod", "stage"),
+        choices=("prod", "stage", "local"),
         default="prod",
         help="The environment to use",
     )
