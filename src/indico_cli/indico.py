@@ -27,7 +27,6 @@ class Indico:
         self.urlbase = urlbase
 
     def _request(self, *args, expect_code=200, ignore_code=False, **kwargs):
-
         if "headers" not in kwargs:
             kwargs["headers"] = {}
         kwargs["headers"].update(self.headers)
@@ -150,7 +149,6 @@ class Indico:
             raise Exception("Unexpected response")
 
     def regfields(self, conference, regform):
-
         url = urljoin(
             self.urlbase,
             f"/event/{conference}/manage/registration/{regform}/form/",

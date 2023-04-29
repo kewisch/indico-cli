@@ -10,8 +10,9 @@ This isn't considered a complete client for Indico by any means (though it could
 ```
 git clone https://github.com/kewisch/indico-cli
 cd indico-cli
-pipenv install
-pipenv run cli --help
+
+pipx install --editable .[dev]
+indico-cli --help
 ```
 
 ```

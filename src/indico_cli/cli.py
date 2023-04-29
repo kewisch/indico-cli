@@ -6,9 +6,10 @@ import sys
 
 import keyring
 from arghandler import ArgumentHandler, subcmd
-from indico import Indico
 from tqdm import tqdm
-from util import IndicoCliException, RegIdMap, fieldnamemap, init_logging, setfield
+
+from .indico import Indico
+from .util import IndicoCliException, RegIdMap, fieldnamemap, init_logging, setfield
 
 INDICO_PROD_URL = "https://events.canonical.com"  # prod
 INDICO_STAGE_URL = "https://events.staging.canonical.com"  # staging
@@ -485,4 +486,5 @@ def main():
         pass
 
 
-main()
+if __name__ == "__main__":
+    main()
