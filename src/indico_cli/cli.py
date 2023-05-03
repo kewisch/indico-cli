@@ -273,7 +273,7 @@ def regfields(indico, conference, regform):
 @main.command()
 @click.argument("conference", type=int)
 @click.argument("regform", type=int)
-@click.argument("csvfile", type=click.File("rb"))
+@click.argument("csvfile", type=click.File("r"))
 @click.option("--register", is_flag=True, help="Register users if they don't exist")
 @click.option("--autodate", is_flag=True, help="Automatically parse date formats")
 @click.option(
@@ -282,6 +282,7 @@ def regfields(indico, conference, regform):
     help="Assume the CSV is using raw field names",
 )
 @click.option("--notify", is_flag=True, help="Notify the user of the change")
+@click.pass_obj
 def regeditcsv(
     indico, conference, regform, csvfile, register, autodate, rawfields, notify
 ):

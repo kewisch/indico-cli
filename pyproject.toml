@@ -15,6 +15,7 @@ dependencies = [
   "keyring",
   #"pydbus; sys_platform = 'linux'",
   #"SecretStorage; sys_platform = 'linux'",
+  "click",
   "tqdm",
 ]
 [project.urls]
