@@ -4,277 +4,311 @@ import json
 import logging
 import sys
 
+import click
 import keyring
-from arghandler import ArgumentHandler, subcmd
 from tqdm import tqdm
 
 from .indico import Indico
 from .util import IndicoCliException, RegIdMap, fieldnamemap, init_logging, setfield
 
-INDICO_PROD_URL = "https://events.canonical.com"  # prod
-INDICO_STAGE_URL = "https://events.staging.canonical.com"  # staging
-INDICO_LOCAL_URL = "http://localhost:8000"  # local
+INDICO_ENVIRONMENTS = {
+    "prod": "https://events.canonical.com",
+    "stage": "https://events.staging.canonical.com",  # staging
+    "local": "http://localhost:8000",  # local
+}
 
 
-@subcmd("adduser", help="Provsion a user")
-def cmd_adduser(handler, indico, args):
-    handler.add_argument("email", help="The email name of the user")
-    handler.add_argument("firstname", help="The first name of the user")
-    handler.add_argument("familyname", help="The family  name of the user")
-    handler.add_argument("affiliation", nargs="?", help="The affiliation of the user")
-    args = handler.parse_args(args)
+def init_indico(env):
+    token = keyring.get_password("indico", "token." + env)
+    if token is None:
+        token = getpass.getpass(f"Enter token for {env}: ")
+        keyring.set_password("indico", "token." + env, token)
 
-    indico.adduser(args.email, args.firstname, args.familyname, args.affiliation)
+    if env not in INDICO_ENVIRONMENTS:
+        raise click.UsageError(f"Invalid environment {env}")
+
+    return Indico(INDICO_ENVIRONMENTS[env], token)
 
 
-@subcmd("groupadduser", help="Adds a user to a group")
-def cmd_groupadduser(handler, indico, args):
-    handler.add_argument("group", help="The id or name of the group")
-    handler.add_argument("user", nargs="+", help="The id or email of the user")
-    args = handler.parse_args(args)
+@click.group()
+@click.option("--debug", is_flag=True, help="Enable debugging.")
+@click.option(
+    "--env",
+    default="prod",
+    type=click.Choice(("prod", "stage", "local")),
+    help="Indico environment to use.",
+)
+@click.option("--config", default="~/.canonicalrc", help="Config file location.")
+@click.pass_context
+def main(ctx, debug, env, config):
+    ctx.obj = init_indico(env)
 
-    if args.group.isdigit():
-        groupid = int(args.group)
+    if debug:
+        init_logging(logging.DEBUG)
+
+
+@main.command()
+@click.argument("email", required=True)
+@click.argument("firstname", required=True)
+@click.argument("familyname", required=True)
+@click.argument("affiliation", required=False)
+@click.pass_obj
+def adduser(indico, email, firstname, familyname, affiliation):
+    """Provision a user"""
+
+    indico.adduser(email, firstname, familyname, affiliation)
+
+
+@main.command()
+@click.argument("group", required=True)
+@click.argument("users", nargs=-1)
+@click.pass_obj
+def groupadduser(indico, group, users):
+    """Adds a user to a group.
+
+    Pass the id or name of the group, and the user(s) to add.
+    """
+
+    if group.isdigit():
+        groupid = int(group)
     else:
-        groupdata = indico.searchgroup(args.group)
+        groupdata = indico.searchgroup(group)
         if len(groupdata) == 1:
             groupid = groupdata[0]["id"]
         else:
-            raise IndicoCliException("Could not find group " + args.group)
+            raise IndicoCliException("Could not find group " + group)
 
     userids = set()
-    for user in args.user:
+    for user in users:
         if user.isdigit():
             userids.add(int(user))
         else:
             userdata = indico.searchuser(user)
             if len(userdata) == 0:
-                print("Warning: Could not find user " + user)
+                click.echo("Warning: Could not find user " + user)
             else:
                 userids.add(userdata[0]["id"])
 
-    users = set(indico.getgroupusers(groupid))
-    if userids.issubset(users):
-        print(f"All users already in group {args.group}")
+    existing_users = set(indico.getgroupusers(groupid))
+    if userids.issubset(existing_users):
+        click.echo(f"All users already in group {group}")
     else:
-        users.update(userids)
-        indico.editgroup(groupid, list(users))
+        userids.update(existing_users)
+        indico.editgroup(groupid, list(userids))
 
 
-@subcmd("regquery", help="Query registrations by filter")
-def cmd_requery(handler, indico, args):
-    handler.add_argument("conference", type=int, help="The id of the conference")
-    handler.add_argument("regform", type=int, help="The id of the registration FORM")
-    handler.add_argument(
-        "--query",
-        "-q",
-        nargs=2,
-        action="append",
-        default=[],
-        metavar=("fieldname", "value"),
-        help="Query for a certain field value",
-    )
-    handler.add_argument(
-        "--fields", "-f", default="Email Address", help="Comma separated list of fields"
-    )
+@main.command()
+@click.argument("conference", type=int)
+@click.argument("regform", type=int)
+@click.option(
+    "--query",
+    "-q",
+    nargs=2,
+    multiple=True,
+    metavar="FIELDNAME VALUE",
+    help="Query for a certain field value",
+)
+@click.option(
+    "--fields", "-f", default="Email Address", help="Comma separated list of fields"
+)
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(("csv", "json")),
+    default="csv",
+    help="Format to output in",
+)
+@click.pass_obj
+def regquery(indico, conference, regform, query, fields, fmt):
+    """Query registrations by filter
 
-    handler.add_argument(
-        "--format", default="csv", choices=("csv", "json"), help="Format to output in"
-    )
-    args = handler.parse_args(args)
-    fieldinfo = indico.regfields(args.conference, args.regform)
+    Pass in the ids of the conference and regform, you can find them in the URL.
+
+    """
+
+    fieldinfo = indico.regfields(conference, regform)
     fieldmap, rawfieldmap = fieldnamemap(fieldinfo, False)
 
     try:
-        fields = list(
-            map(lambda field: fieldmap[field]["htmlName"], args.fields.split(","))
-        )
-        querydict = {fieldmap[key]["htmlName"]: value for key, value in args.query}
+        fields = list(map(lambda field: fieldmap[field]["htmlName"], fields.split(",")))
+        querydict = {fieldmap[key]["htmlName"]: value for key, value in query}
     except KeyError as e:
-        print(f"Unknown field name: {e.args[0]}")
+        click.echo(f"Unknown field name: {e.args[0]}")
         sys.exit(1)
 
     data = indico.query_registration(
-        args.conference, args.regform, query=querydict, fields=fields
+        conference, regform, query=querydict, fields=fields
     )
 
-    if args.format == "json":
-        print(json.dumps(data, indent=2))
-    elif args.format == "csv":
+    if fmt == "json":
+        click.echo(json.dumps(data, indent=2))
+    elif fmt == "csv":
         showheader = len(fields) > 1
         for row in data:
             header = list(row.keys())
             if showheader:
-                print(",".join(header))
+                click.echo(",".join(header))
                 showheader = False
 
-            print(",".join(row.values()))
+            click.echo(",".join(row.values()))
 
 
-@subcmd("regedit", help="Edit a user registration")
-def cmd_regedit(handler, indico, args):
-    handler.add_argument(
-        "conference", type=int, help="The id of the conference to edit"
-    )
-    handler.add_argument(
-        "regform", type=int, help="The id of the registration FORM to edit"
-    )
-    handler.add_argument(
-        "regid", nargs="*", help="The registration id or email to edit"
-    )
-    handler.add_argument(
-        "--set",
-        "-s",
-        nargs=2,
-        dest="setfields",
-        action="append",
-        default=[],
-        metavar=("fieldname", "value"),
-        help="Set a field",
-    )
-    handler.add_argument(
-        "--allow-email", action="store_true", help="Allow changing the Email field"
-    )
-    handler.add_argument(
-        "--rawfields",
-        action="store_true",
-        help="Assume the CSV is using raw field names",
-    )
-    handler.add_argument(
-        "--autodate", action="store_true", help="Automatically parse date formats"
-    )
-    handler.add_argument(
-        "--notify", action="store_true", help="Notify the user of the change"
-    )
-    handler.add_argument(
-        "--all",
-        "-a",
-        action="store_true",
-        help="Set the value on all registrants. CAVEAT: this only works with a single registration form",
-    )
-    args = handler.parse_args(args)
+@main.command()
+@click.argument("conference", type=int)
+@click.argument("regform", type=int)
+@click.argument("regids", nargs=-1)
+@click.option(
+    "--set",
+    "-s",
+    "setfields",
+    nargs=2,
+    multiple=True,
+    metavar="FIELDNAME VALUE",
+    help="Set a field",
+)
+@click.option("--allow-email", is_flag=True, help="Allow changing the Email field")
+@click.option(
+    "--rawfields",
+    is_flag=True,
+    help="Assume the CSV is using raw field names",
+)
+@click.option("--rawfileds", is_flag=True, help="Assume raw field names instead")
+@click.option("--autodate", is_flag=True, help="Automatically parse date formats")
+@click.option("--notify", is_flag=True, help="Notify the user of the change")
+@click.option(
+    "--all",
+    "-a",
+    "allreg",
+    is_flag=True,
+    help="Set the value on all registrants. CAVEAT: this only works with a single registration form",
+)
+@click.pass_obj
+def regedit(
+    indico,
+    conference,
+    regform,
+    regids,
+    setfields,
+    allow_email,
+    rawfields,
+    autodate,
+    notify,
+    allreg,
+):
+    """Edit a user registration"""
 
-    if args.all:
-        print("Retrieving all registration ids...", end="", flush=True)
-        args.regid = list(
+    if allreg:
+        click.echo("Retrieving all registration ids...", nl=False)
+        regids = list(
             map(
                 lambda row: row["registrant_id"],
-                indico.get_registrations(args.conference),
+                indico.get_registrations(conference),
             )
         )
-        print("Done")
+        click.echo("Done")
     else:
-        cachereg = RegIdMap(indico, args.conference)
+        cachereg = RegIdMap(indico, conference)
         try:
-            args.regid = list(
+            regids = list(
                 map(
                     lambda regid: int(regid) if regid.isdigit() else cachereg[regid],
-                    args.regid,
+                    regids,
                 )
             )
         except KeyError as e:
-            print(f"{e.args[0]} not found")
-            sys.exit(1)
+            raise click.BadParameter(f"{e.args[0]} not found")
 
-    fieldinfo = indico.regfields(args.conference, args.regform)
-    fieldmap, rawfieldmap = fieldnamemap(fieldinfo, rawfields=args.rawfields)
-    for regid in tqdm(args.regid, desc="Setting fields", unit="users"):
+    fieldinfo = indico.regfields(conference, regform)
+    fieldmap, rawfieldmap = fieldnamemap(fieldinfo, rawfields=rawfields)
+    for regid in tqdm(regids, desc="Setting fields", unit="users"):
         data = {}
 
         try:
-            for key, value in args.setfields:
+            for key, value in setfields:
                 setfield(
                     data,
                     value,
                     fieldmap[key],
-                    autodate=args.autodate,
-                    allow_email=args.allow_email,
+                    autodate=autodate,
+                    allow_email=allow_email,
                 )
 
-            indico.regedit(args.conference, args.regform, regid, data, args.notify)
+            indico.regedit(conference, regform, regid, data, notify)
         except IndicoCliException as e:
-            tqdm.write(f"{args.regid} FAILED: {e}")
+            tqdm.write(f"{regid} FAILED: {e}")
         except Exception as e:
-            tqdm.write(f"{args.regid} FAILED: {type(e).__name__}: {e}")
+            tqdm.write(f"{regid} FAILED: {type(e).__name__}: {e}")
             if logging.getLogger().isEnabledFor(logging.DEBUG):
                 raise e
 
 
-@subcmd("regfields", help="Get field names for CSV import")
-def cmd_regfields(handler, indico, args):
-    handler.add_argument(
-        "conference", type=int, help="The id of the conference to edit"
-    )
-    handler.add_argument(
-        "regform", type=int, help="The id of the registration FORM to edit"
-    )
-    args = handler.parse_args(args)
+@main.command()
+@click.argument("conference", type=int)
+@click.argument("regform", type=int)
+@click.pass_obj
+def regfields(indico, conference, regform):
+    """Get field names for CSV import"""
 
-    data = indico.regfields(args.conference, args.regform)
-    print("When putting together the CSV file for import, use the Name of the field as")
-    print("the column header. You will only need the ID if you are using --rawfields\n")
+    data = indico.regfields(conference, regform)
+    click.echo(
+        "When putting together the CSV file for import, use the Name of the field as"
+    )
+    click.echo(
+        "the column header. You will only need the ID if you are using --rawfields\n"
+    )
     for field, data in data.items():
         if not data["isEnabled"]:
             continue
 
-        print(
+        click.echo(
             f"     ID: {data['htmlName']:<10}   Type: {data['inputType']:<20} Name: {data['title']}"
         )
         if "captions" in data:
-            print("         Choices:")
+            click.echo("         Choices:")
             for uid, caption in data["captions"].items():
-                print(f"           {caption} ({uid})")
-            print("\n")
+                click.echo(f"           {caption} ({uid})")
+            click.echo("\n")
 
 
-@subcmd("regeditcsv", help="Bulk edit user registration via csv")
-def cmd_regeditcsv(handler, indico, args):
-    handler.add_argument(
-        "conference", type=int, help="The id of the conference to edit"
-    )
-    handler.add_argument(
-        "regform", type=int, help="The id of the registration FORM to edit"
-    )
-    handler.add_argument(
-        "--register", action="store_true", help="Register users if they don't exist"
-    )
-    handler.add_argument(
-        "--autodate", action="store_true", help="Automatically parse date formats"
-    )
-    handler.add_argument(
-        "--rawfields",
-        action="store_true",
-        help="Assume the CSV is using raw field names",
-    )
-    handler.add_argument(
-        "--notify", action="store_true", help="Notify the user of the change"
-    )
-    handler.add_argument("csvfile", help="The file with the data")
-    args = handler.parse_args(args)
+@main.command()
+@click.argument("conference", type=int)
+@click.argument("regform", type=int)
+@click.argument("csvfile", type=click.File("rb"))
+@click.option("--register", is_flag=True, help="Register users if they don't exist")
+@click.option("--autodate", is_flag=True, help="Automatically parse date formats")
+@click.option(
+    "--rawfields",
+    is_flag=True,
+    help="Assume the CSV is using raw field names",
+)
+@click.option("--notify", is_flag=True, help="Notify the user of the change")
+def regeditcsv(
+    indico, conference, regform, csvfile, register, autodate, rawfields, notify
+):
+    """Bulk edit user registration via csv"""
 
-    print("Loading field and registration data...", end="", flush=True)
-    fieldinfo = indico.regfields(args.conference, args.regform)
-    fieldmap, rawfieldmap = fieldnamemap(fieldinfo, args.rawfields)
-    cachereg = RegIdMap(indico, args.conference, noisy=False)
-    print("Done")
+    click.echo("Loading field and registration data...", nl=False)
+    fieldinfo = indico.regfields(conference, regform)
+    fieldmap, rawfieldmap = fieldnamemap(fieldinfo, rawfields)
+    cachereg = RegIdMap(indico, conference, noisy=False)
+    click.echo("Done")
 
     fieldnames = None
     rows = None
     registerusers = {}
 
     def lookupfield(name):
-        return rawfieldmap[name]["htmlName" if args.rawfields else "title"]
+        return rawfieldmap[name]["htmlName" if rawfields else "title"]
 
     emailfield = lookupfield("email")
 
-    with open(args.csvfile, newline="") as csvfile:
-        reader = csv.DictReader(csvfile)
-        if lookupfield("email") not in reader.fieldnames:
-            raise IndicoCliException("Missing Email Address field in csv file")
-        fieldnames = reader.fieldnames
-        rows = list(reader)
+    reader = csv.DictReader(csvfile)
+    if lookupfield("email") not in reader.fieldnames:
+        raise IndicoCliException("Missing Email Address field in csv file")
+    fieldnames = reader.fieldnames
+    rows = list(reader)
 
-    if args.register:
+    if register:
         for row in rows:
             if row[emailfield] not in cachereg:
                 if lookupfield("first_name") in row and lookupfield("last_name") in row:
@@ -299,16 +333,16 @@ def cmd_regeditcsv(handler, indico, args):
                         + "affiliation, position (team)"
                     )
         if len(registerusers) > 0:
-            print(f"Registering {len(registerusers)} new users...", end="", flush=True)
+            click.echo(f"Registering {len(registerusers)} new users...", nl=False)
             indico.regcsvimport(
-                args.conference,
-                args.regform,
+                conference,
+                regform,
                 registerusers.values(),
-                notify=args.notify,
+                notify=notify,
             )
-            print("Done")
+            click.echo("Done")
             # Reload cache to get new reg ids
-            cachereg = RegIdMap(indico, args.conference)
+            cachereg = RegIdMap(indico, conference)
 
     for row in tqdm(rows, desc="Setting fields", unit="users"):
         try:
@@ -335,8 +369,8 @@ def cmd_regeditcsv(handler, indico, args):
                 ):
                     # Skip fields that were set as part of the user registration
                     continue
-                setfield(data, row[field], fieldmap[field], autodate=args.autodate)
-            indico.regedit(args.conference, args.regform, regid, data, args.notify)
+                setfield(data, row[field], fieldmap[field], autodate=autodate)
+            indico.regedit(conference, regform, regid, data, notify)
         except IndicoCliException as e:
             tqdm.write(f"{row[emailfield]} FAILED: {e}")
         except Exception as e:
@@ -345,75 +379,85 @@ def cmd_regeditcsv(handler, indico, args):
                 raise e
 
 
-@subcmd("submitcheck", help="Check if all contributors have the submitter bit set")
-def cmd_submitcheck(handler, indico, args):
-    handler.add_argument(
-        "conference", type=int, help="The id of the conference to check"
-    )
-    args = handler.parse_args(args)
-
-    indico.check_contrib_submitter(args.conference)
+@main.command()
+@click.argument("conference", type=int)
+@click.pass_obj
+def submitcheck(indico, conference):
+    """Check if all contributors have the submitter bit set"""
+    indico.check_contrib_submitter(conference)
 
 
-@subcmd("timetable", help="Get timetable json data")
-def cmd_timetable(handler, indico, args):
-    handler.add_argument("conference", type=int, help="The id of the conference")
-    args = handler.parse_args(args)
+@main.command()
+@click.argument("conference", type=int)
+@click.pass_obj
+def timetable(indico, conference):
+    """Get timetable json data"""
 
-    data = indico.get_timetable(args.conference)
-    print(json.dumps(data, indent=2))
-
-
-@subcmd("contributions", help="Get contributions json data")
-def cmd_contribtions(handler, indico, args):
-    handler.add_argument("conference", type=int, help="The id of the conference")
-    args = handler.parse_args(args)
-
-    data = indico.get_contributions(args.conference)
-    print(json.dumps(data, indent=2))
+    data = indico.get_timetable(conference)
+    click.echo(json.dumps(data, indent=2))
 
 
-@subcmd("overlap", help="Check timetable overlap")
-def cmd_overlap(handler, indico, args):
-    handler.add_argument("conference", type=int, help="The id of the conference")
-    args = handler.parse_args(args)
+@main.command()
+@click.argument("conference", type=int)
+@click.pass_obj
+def contribtions(indico, conference):
+    """Get contributions json data"""
 
-    indico.check_overlap(args.conference)
-
-
-@subcmd("emaillog", help="Retrieve the email log")
-def cmd_emaillog(handler, indico, args):
-    handler.add_argument("conference", type=int, help="The id of the conference")
-    handler.add_argument("query", help="The text to search for in the log")
-    args = handler.parse_args(args)
-
-    data = indico.get_log(args.conference, args.query, logtype=["email"])
-    print(json.dumps(data, indent=2))
+    data = indico.get_contributions(conference)
+    click.echo(json.dumps(data, indent=2))
 
 
-@subcmd("swap", help="Swap timetable entries")
-def cmd_swap(handler, indico, args):
-    handler.add_argument(
-        "-t",
-        "--type",
-        choices=("cid", "tid", "aid"),
-        default="cid",
-        help="Type of id specified (contribution id, timetable id, aid)",
-    )
-    handler.add_argument("conference", type=int, help="The id of the conference")
-    handler.add_argument("entryA", type=int, help="The id the first entry")
-    handler.add_argument("entryB", type=int, help="The id the second entry")
-    args = handler.parse_args(args)
+@main.command()
+@click.argument("conference", type=int)
+@click.pass_obj
+def overlap(indico, conference):
+    """Check timetable overlap"""
+
+    indico.check_overlap(conference)
+
+
+@main.command()
+@click.argument("conference", type=int)
+@click.argument("query")
+@click.pass_obj
+def emaillog(indico, conference, query):
+    """Retrieve the email log
+
+    Pass in the text to query for
+    """
+
+    data = indico.get_log(conference, query, logtype=["email"])
+    click.echo(json.dumps(data, indent=2))
+
+
+@main.command()
+@click.argument("conference", type=int)
+@click.argument("entryA", type=int)
+@click.argument("entryB", type=int)
+@click.option(
+    "-t",
+    "--type",
+    "idtype",
+    type=click.Choice(("cid", "tid", "aid")),
+    default="cid",
+    help="Type of id specified (contribution id, timetable id, aid)",
+)
+@click.pass_obj
+def swap(indico, conference, entryA, entryB, idtype):
+    """Swap timetable entries
+
+    Pass in the id of the conference, and two ids related to the timetable that will be swapped.
+    """
 
     keymap = {"cid": "contributionId", "tid": "id", "aid": "friendlyId"}
-    data = indico.swap_timetable(
-        args.conference, args.entryA, args.entryB, keymap[args.type]
-    )
-    print(json.dumps(data, indent=2))
+    data = indico.swap_timetable(conference, entryA, entryB, keymap[idtype])
+    click.echo(json.dumps(data, indent=2))
 
 
-@subcmd("cleartoken", help="Clear indico tokens")
-def cmd_cleartoken(handler, indico, args):
+@main.command()
+def cleartoken():
+    """Clear indico tokens"""
+
     try:
         keyring.delete_password("indico", "token.stage")
     except keyring.errors.PasswordDeleteError:
@@ -422,68 +466,25 @@ def cmd_cleartoken(handler, indico, args):
         keyring.delete_password("indico", "token.prod")
     except keyring.errors.PasswordDeleteError:
         pass
-    print("Tokens have been cleared")
+    click.echo("Tokens have been cleared")
 
 
-@subcmd("contrib_link", help="Add a contribution link")
-def cmd_contrib_link(handler, indico, args):
-    handler.add_argument(
-        "-t",
-        "--type",
-        choices=("cid", "tid", "aid"),
-        default="cid",
-        help="Type of id specified (contribution id, timetable id, aid)",
-    )
-    handler.add_argument("conference", type=int, help="The id of the conference")
-    handler.add_argument("contribId", type=int, help="The contribution id")
-    handler.add_argument("url", help="The link to add")
-    handler.add_argument("title", help="The title of the link")
-    args = handler.parse_args(args)
+@main.command()
+@click.argument("conference", type=int)
+@click.argument("contribId", type=int)
+@click.argument("url")
+@click.argument("title")
+@click.pass_obj
+def contrib_link(indico, conference, contribId, url, title):
+    """Add a contribution link
 
-    if not args.url.startswith("http"):
-        print("not a link", args.url)
-        sys.exit(1)
+    Pass in the conference id, the id of the contribution, the url fof the link to add, and the
+    title of the link
+    """
+    if not url.startswith("http"):
+        raise click.UsageError(f"{url} is not a link")
 
-    print(
-        indico.contributions_link(args.conference, args.contribId, args.url, args.title)
-    )
-
-
-def main():
-    def load_context(args):
-        if args.env == "staging":
-            args.env == "stage"
-
-        token = keyring.get_password("indico", "token." + args.env)
-        if token is None:
-            token = getpass.getpass(f"Enter token for {args.env}: ")
-            keyring.set_password("indico", "token." + args.env, token)
-
-        if args.env == "prod":
-            return Indico(INDICO_PROD_URL, token)
-        elif args.env == "stage":
-            return Indico(INDICO_STAGE_URL, token)
-        elif args.env == "local":
-            return Indico(INDICO_LOCAL_URL, token)
-
-        raise Exception("Invalid environment " + args.env)
-
-    handler = ArgumentHandler(use_subcommand_help=True)
-    handler.add_argument(
-        "-e",
-        "--env",
-        choices=("prod", "stage", "local"),
-        default="prod",
-        help="The environment to use",
-    )
-    handler.set_logging_argument(
-        "-d", "--debug", default_level=logging.WARNING, config_fxn=init_logging
-    )
-
-    try:
-        handler.run(sys.argv[1:], context_fxn=load_context)
-    except KeyboardInterrupt:
-        pass
+    click.echo(indico.contributions_link(conference, contribId, url, title))
 
 
 if __name__ == "__main__":
