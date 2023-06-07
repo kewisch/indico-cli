@@ -5,6 +5,8 @@ from datetime import datetime
 
 from dateutil.parser import parse as dateparse
 
+CSV_DEFAULT_FIELDS = ("first_name", "last_name", "affiliation", "position", "phone")
+
 
 class IndicoCliException(Exception):
     pass
@@ -42,6 +44,20 @@ def parsedate(fieldvalue, autodate=False, dateonly=False):
         return date.strftime("%Y-%m-%d")
     else:
         return date.isoformat(timespec="seconds")
+
+
+def create_register_fields(row, rawfieldmap, rawfields=False):
+    def lookupfield(name):
+        return rawfieldmap.get(name, {}).get("htmlName" if rawfields else "title", None)
+
+    return [
+        row[lookupfield("first_name")],
+        row[lookupfield("last_name")],
+        row.get(lookupfield("affiliation"), ""),
+        row.get(lookupfield("position"), ""),
+        row.get(lookupfield("phone"), ""),
+        row[lookupfield("email")],
+    ]
 
 
 def setfield(data, fieldvalue, fielddata, autodate=False, allow_email=False):
@@ -167,10 +183,15 @@ def set_country_field(data, fieldvalue, fielddata, autodate=False):
 def fieldnamemap(fieldinfo, rawfields):
     data = {}
     rawdata = {}
-    for field, fielddata in fieldinfo.items():
+    for field, fielddata in fieldinfo["items"].items():
+        section = fieldinfo["sections"][str(fielddata["sectionId"])]
+        if not section["enabled"] or not fielddata["isEnabled"]:
+            continue
+
         if fielddata["title"] in data:
             raise IndicoCliException(
-                "Ambiguous field info, use raw field names instead"
+                "Ambiguous field info, use raw field names instead: "
+                + fielddata["title"]
             )
         data[fielddata["title"]] = fielddata
         rawdata[fielddata["htmlName"]] = fielddata

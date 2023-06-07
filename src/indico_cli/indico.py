@@ -158,22 +158,6 @@ class Indico:
 
         node = doc.cssselect("#registration-form-setup-container")[0]
         data = json.loads(node.attrib["data-form-data"])
-        return data["items"]
-
-        data = {
-            "firstname": "First name",
-            "lastname": "Last name",
-            "affiliation": "Company",
-            "email": "Email",
-            "position": "Team",
-            "country": "ISO Country code",
-        }
-
-        for node in doc.cssselect("[data-item-id]"):
-            data["field_" + node.attrib["data-item-id"]] = node.cssselect(".title")[
-                0
-            ].text_content()
-
         return data
 
     def regcsvimport(self, conference, regform, rowdata, moderate=False, notify=False):

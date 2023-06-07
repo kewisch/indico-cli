@@ -9,7 +9,15 @@ import keyring
 from tqdm import tqdm
 
 from .indico import Indico
-from .util import IndicoCliException, RegIdMap, fieldnamemap, init_logging, setfield
+from .util import (
+    CSV_DEFAULT_FIELDS,
+    IndicoCliException,
+    RegIdMap,
+    create_register_fields,
+    fieldnamemap,
+    init_logging,
+    setfield,
+)
 
 INDICO_ENVIRONMENTS = {
     "prod": "https://events.canonical.com",
@@ -243,31 +251,49 @@ def regedit(
 
 
 @main.command()
+@click.option("--disabled", "disabledfields", is_flag=True, help="Show disabled fields")
 @click.argument("conference", type=int)
 @click.argument("regform", type=int)
 @click.pass_obj
-def regfields(indico, conference, regform):
+def regfields(indico, disabledfields, conference, regform):
     """Get field names for CSV import"""
 
-    data = indico.regfields(conference, regform)
+    fieldinfo = indico.regfields(conference, regform)
     click.echo(
         "When putting together the CSV file for import, use the Name of the field as"
     )
     click.echo(
         "the column header. You will only need the ID if you are using --rawfields\n"
     )
-    for field, data in data.items():
-        if not data["isEnabled"]:
-            continue
+    for field, data in fieldinfo["items"].items():
+        section = fieldinfo["sections"][str(data["sectionId"])]
+        if "items" not in section:
+            section["items"] = []
 
+        section["items"].append(data)
+
+    for sectionId, section in sorted(
+        fieldinfo["sections"].items(), key=lambda sec: sec[1]["position"]
+    ):
+        if not disabledfields and not section["enabled"]:
+            continue
         click.echo(
-            f"     ID: {data['htmlName']:<10}   Type: {data['inputType']:<20} Name: {data['title']}"
+            f"    Section: {section['title']}"
+            + (" (disabled)" if not section["enabled"] else "")
         )
-        if "captions" in data:
-            click.echo("         Choices:")
-            for uid, caption in data["captions"].items():
-                click.echo(f"           {caption} ({uid})")
-            click.echo("\n")
+        for data in sorted(section["items"], key=lambda itm: itm["position"]):
+            if not disabledfields and not data["isEnabled"]:
+                continue
+
+            click.echo(
+                f"        ID: {data['htmlName']:<10}   Type: {data['inputType']:<20} Name: {data['title']}"
+                + (" (disabled)" if not data["isEnabled"] else "")
+            )
+            if "captions" in data:
+                click.echo("            Choices:")
+                for uid, caption in data["captions"].items():
+                    click.echo(f"                {caption} ({uid})")
+                click.echo("\n")
 
 
 @main.command()
@@ -299,40 +325,31 @@ def regeditcsv(
     registerusers = {}
 
     def lookupfield(name):
-        return rawfieldmap[name]["htmlName" if rawfields else "title"]
+        return rawfieldmap.get(name, {}).get("htmlName" if rawfields else "title", None)
 
     emailfield = lookupfield("email")
 
     reader = csv.DictReader(csvfile)
-    if lookupfield("email") not in reader.fieldnames:
-        raise IndicoCliException("Missing Email Address field in csv file")
+    if emailfield not in reader.fieldnames:
+        raise IndicoCliException("Missing 'Email Address' field in csv file")
+
     fieldnames = reader.fieldnames
     rows = list(reader)
 
     if register:
         for row in rows:
             if row[emailfield] not in cachereg:
-                if lookupfield("first_name") in row and lookupfield("last_name") in row:
-                    registerusers[row[lookupfield("email")]] = [
-                        row[lookupfield("first_name")],
-                        row[lookupfield("last_name")],
-                        row[lookupfield("affiliation")]
-                        if lookupfield("affiliation") in row
-                        else "",
-                        row[lookupfield("position")]
-                        if lookupfield("position") in row
-                        else "",
-                        row[lookupfield("phone")]
-                        if lookupfield("phone") in row
-                        else "",
-                        row[emailfield],
-                    ]
-                else:
+                try:
+                    registerusers[row[emailfield]] = create_register_fields(
+                        row, rawfieldmap, rawfields
+                    )
+                except KeyError as e:
                     raise IndicoCliException(
                         f"User {row[emailfield]} is not previously registered, CSV requires at "
-                        + "least email, firstname and lastname fields, preferably also "
-                        + "affiliation, position (team)"
+                        + "least email, firstname and lastname fields, optionally also "
+                        + f"affiliation, position (team) (Missing: {e.args[0]})"
                     )
+
         if len(registerusers) > 0:
             click.echo(f"Registering {len(registerusers)} new users...", nl=False)
             indico.regcsvimport(
@@ -361,12 +378,9 @@ def regeditcsv(
                     raise IndicoCliException(
                         "Could not find registration field: " + field
                     )
-                if row[emailfield] in registerusers and fieldmap[field]["htmlName"] in (
-                    "first_name",
-                    "last_name",
-                    "affiliation",
-                    "position",
-                    "phone",
+                if (
+                    row[emailfield] in registerusers
+                    and fieldmap[field]["htmlName"] in CSV_DEFAULT_FIELDS
                 ):
                     # Skip fields that were set as part of the user registration
                     continue
