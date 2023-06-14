@@ -185,7 +185,12 @@ def fieldnamemap(fieldinfo, rawfields):
     rawdata = {}
     for field, fielddata in fieldinfo["items"].items():
         section = fieldinfo["sections"][str(fielddata["sectionId"])]
-        if not section["enabled"] or not fielddata["isEnabled"]:
+        if (
+            not section["enabled"]
+            or not fielddata["isEnabled"]
+            # Readonly fields like labels don't have a htmlName
+            or "htmlName" not in fielddata
+        ):
             continue
 
         if fielddata["title"] in data:

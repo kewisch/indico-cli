@@ -285,10 +285,19 @@ def regfields(indico, disabledfields, conference, regform):
             if not disabledfields and not data["isEnabled"]:
                 continue
 
-            click.echo(
-                f"        ID: {data['htmlName']:<10}   Type: {data['inputType']:<20} Name: {data['title']}"
-                + (" (disabled)" if not data["isEnabled"] else "")
-            )
+            if data["inputType"] == "label":
+                click.echo(
+                    f"        ID: field_{data['id']:<4}   Type: {data['inputType']:<20} Name: {data['title']} (readonly)"
+                    + (" (disabled)" if not data["isEnabled"] else "")
+                )
+            elif "htmlName" in data:
+                click.echo(
+                    f"        ID: {data['htmlName']:<10}   Type: {data['inputType']:<20} Name: {data['title']}"
+                    + (" (disabled)" if not data["isEnabled"] else "")
+                )
+            else:
+                click.echo("        Unhandled field type: " + str(data))
+
             if "captions" in data:
                 click.echo("            Choices:")
                 for uid, caption in data["captions"].items():
