@@ -12,7 +12,7 @@ class IndicoCliException(Exception):
     pass
 
 
-def init_logging(level, _):
+def init_logging(level):
     logging.basicConfig()
     logging.getLogger().setLevel(level)
     requests_log = logging.getLogger("requests.packages.urllib3")

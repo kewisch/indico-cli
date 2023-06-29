@@ -63,7 +63,7 @@ class Indico:
             "email": email,
             "affiliation": affiliation,
         }
-        url = urljoin(self.urlbase, "/admin/users/create")
+        url = urljoin(self.urlbase, "/admin/users/create/")
         r = self._request("POST", url, data=data)
 
         return r.json()
