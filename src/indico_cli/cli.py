@@ -483,18 +483,32 @@ def swap(indico, conference, entryA, entryB, idtype):
 
 
 @main.command()
-def cleartoken():
-    """Clear indico tokens"""
+@click.option("--prod", is_flag=True, help="Clear the production token")
+@click.option("--stage", is_flag=True, help="Clear the production token")
+def cleartoken(prod, stage):
+    """Clear indico tokens.
 
-    try:
-        keyring.delete_password("indico", "token.stage")
-    except keyring.errors.PasswordDeleteError:
-        pass
-    try:
-        keyring.delete_password("indico", "token.prod")
-    except keyring.errors.PasswordDeleteError:
-        pass
-    click.echo("Tokens have been cleared")
+
+    If neither --prod or --stage are passed, both tokens are cleared.
+    """
+
+    if not prod and not stage:
+        prod = True
+        stage = True
+
+    if stage:
+        try:
+            keyring.delete_password("indico", "token.stage")
+        except keyring.errors.PasswordDeleteError:
+            pass
+        click.echo("Stage token has been cleared")
+
+    if prod:
+        try:
+            keyring.delete_password("indico", "token.prod")
+        except keyring.errors.PasswordDeleteError:
+            pass
+        click.echo("Production token has been cleared")
 
 
 @main.command()
