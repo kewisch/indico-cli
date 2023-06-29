@@ -1,6 +1,6 @@
 [project]
 name = "indico-cli"
-version = "1.0.2"
+version = "1.0.3"
 description = "Command line tool for Indico"
 authors = [
   { name = "Philipp Kewisch", email = "code@kewis.ch" }
