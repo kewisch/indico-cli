@@ -393,6 +393,10 @@ def regeditcsv(
                 ):
                     # Skip fields that were set as part of the user registration
                     continue
+
+                if row[field] is None:
+                    row[field] = ""
+
                 setfield(data, row[field], fieldmap[field], autodate=autodate)
             indico.regedit(conference, regform, regid, data, notify)
         except IndicoCliException as e:
