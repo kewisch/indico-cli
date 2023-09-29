@@ -33,6 +33,8 @@ class Indico:
         kwargs["allow_redirects"] = False
         kwargs["headers"]["accept"] = "application/json"
         kwargs["headers"]["cache-control"] = "no-cache"
+        kwargs["headers"]["pragma"] = "no-cache"
+        kwargs["headers"]["expires"] = "0"
 
         r = requests.request(*args, **kwargs)
         if "location" in r.headers and "/login/" in r.headers["location"]:
