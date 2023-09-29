@@ -686,6 +686,35 @@ def swap(indico, conference, entryA, entryB, idtype):
 
 
 @main.command()
+@click.argument("conference", type=int)
+@click.argument("regform", type=int)
+@click.argument("field")
+@click.pass_obj
+def countfield(indico, conference, regform, field):
+    fieldinfo = indico.regfields(conference, regform)
+    fieldmap, rawfieldmap = fieldnamemap(fieldinfo, False)
+
+    field_id = fieldmap[field]["id"]
+
+    aggregate = defaultdict(lambda: 0)
+
+    regs = indico.query_registration(conference, regform, fields=[field_id])
+    for item in regs:
+        aggregate[item[field]] += 1
+
+    novalue = aggregate[""]
+    del aggregate[""]
+    total = novalue
+
+    for key, count in sorted(aggregate.items(), key=lambda kv: kv[1]):
+        print(f"{count:<10}\t{key}")
+        total += count
+
+    print(f"\nWithout value: {novalue}")
+    print(f"Total: {total}")
+
+
+@main.command()
 @click.option("--prod", is_flag=True, help="Clear the production token")
 @click.option("--stage", is_flag=True, help="Clear the production token")
 def cleartoken(prod, stage):
