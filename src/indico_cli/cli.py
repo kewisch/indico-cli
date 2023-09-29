@@ -715,6 +715,22 @@ def countfield(indico, conference, regform, field):
 
 
 @main.command()
+@click.argument("conference", type=int)
+@click.argument("fromtype", type=click.Choice(["id", "db_id", "friendly_id"]))
+@click.argument("fromid")
+@click.argument("totype", type=click.Choice(["id", "db_id", "friendly_id"]))
+@click.option("--usecache", is_flag=True, help="Use contributions.json cache")
+@click.pass_obj
+def convertid(indico, conference, fromtype, fromid, totype, usecache):
+    contributions = indico.get_contributions(conference, usecache)
+
+    for contrib in contributions["results"][0]["contributions"]:
+        if contrib[fromtype] == fromid:
+            print(contrib[totype])
+            return
+
+
+@main.command()
 @click.option("--prod", is_flag=True, help="Clear the production token")
 @click.option("--stage", is_flag=True, help="Clear the production token")
 def cleartoken(prod, stage):

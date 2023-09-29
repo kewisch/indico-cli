@@ -355,6 +355,16 @@ class Indico:
                     )
                 lastentry = entry
 
+    def convertid(self, conference, fromtype, fromid, totype, contribcache=None):
+        if not contribcache:
+            contribcache = self.get_contributions(conference)
+
+        for contrib in contribcache["results"][0]["contributions"]:
+            if contrib[fromtype] == fromid:
+                return contrib[totype]
+
+        return None
+
     def convert_timetable_to_contrib(self, conference, cid):
         url = urljoin(
             self.urlbase, f"/event/{conference}/manage/timetable/entry/{cid}/info"
