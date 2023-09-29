@@ -198,10 +198,14 @@ class Indico:
             print(r.text)
             raise Exception(f"Request failed with {r.status_code}")
 
-    def get_contributions(self, conference):
-        # with open("contributions.json", "r") as gp:
-        #    return json.load(gp)
+    def get_contributions(self, conference, cache=False, tz=None):
+        if cache:
+            with open("contributions.json", "r") as gp:
+                return json.load(gp)
+
         params = {"detail": "contributions"}
+        if tz:
+            params["tz"] = tz
         url = urljoin(self.urlbase, f"/export/event/{conference}.json")
         r = self._request("GET", url, params=params)
         return r.json()
@@ -272,7 +276,7 @@ class Indico:
         r = self._request("GET", url)
         return r.json()
 
-    def check_overlap(self, conference):
+    def check_author_overlap(self, conference):
         table = self.get_contributions(conference)
         byauthor = defaultdict(set)
         byroom = defaultdict(set)
@@ -331,7 +335,7 @@ class Indico:
             sentries = sorted(entries, key=lambda e: time_int2(e[0]))
 
             # print(author,"\n\t" + "\n\t".join(map(lambda e: e[0] + " – " + e[1], sentries)))
-            print(author)
+            # print(author)
 
             lastentry = sentries[0]
             for entry in sentries[1:]:

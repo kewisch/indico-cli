@@ -3,9 +3,11 @@ import getpass
 import json
 import logging
 import sys
+from collections import defaultdict
 
 import click
 import keyring
+import yaml
 from tqdm import tqdm
 
 from .indico import Indico
@@ -432,21 +434,217 @@ def timetable(indico, conference):
 
 @main.command()
 @click.argument("conference", type=int)
+@click.option(
+    "--import",
+    "importfile",
+    type=click.File("r"),
+    help="Import contributions to conference from file",
+)
 @click.pass_obj
-def contribtions(indico, conference):
-    """Get contributions json data"""
+def contributions(indico, conference, importfile):
+    """Retrieve or import contributions json data"""
 
-    data = indico.get_contributions(conference)
-    click.echo(json.dumps(data, indent=2))
+    def ensure_author(authormap, obj):
+        if obj["id"] not in authormap:
+            authormap[obj["id"]] = {
+                "first_name": obj["first_name"],
+                "last_name": obj["last_name"],
+                "affiliation": obj["affiliation"],
+                "affiliation_id": None,
+                "email": obj["email"],
+                "address": "",
+                "phone": "",
+                "roles": ["submitter"],
+            }
+        return authormap[obj["id"]]
+
+    if importfile:
+        contribdata = json.load(importfile)
+
+        for contribution in contribdata["results"][0]["contributions"]:
+            authormap = {}
+            for speaker in contribution["speakers"]:
+                author = ensure_author(authormap, speaker)
+                if "speaker" not in author["roles"]:
+                    author["roles"].append("speaker")
+            for primaryauthor in contribution["primaryauthors"]:
+                author = ensure_author(authormap, primaryauthor)
+                if "primary" not in author["roles"]:
+                    author["roles"].append("primary")
+            for coauthor in contribution["coauthors"]:
+                author = ensure_author(authormap, coauthor)
+                if "secondary" not in author["roles"]:
+                    author["roles"].append("secondary")
+
+            data = {
+                "title": contribution["title"],
+                "description": contribution["description"],
+                "duration": contribution["duration"] * 60,
+                "title": contribution["title"],
+                "person_link_data": json.dumps(list(authormap.values())),
+                "location_data": '{"address":"","inheriting":true}',
+                "references": "[]",
+                "board_number": "",
+                "code": "",
+            }
+            try:
+                indico.add_contribution(conference, data)
+            except:
+                print("FAILED", json.dumps(data))
+
+    else:
+        data = indico.get_contributions(conference)
+        click.echo(json.dumps(data, indent=2))
 
 
 @main.command()
 @click.argument("conference", type=int)
+@click.argument("parent", type=int)
+@click.option("--from", "fromContribution", help="Create from contribution")
+@click.option("--title", help="The title to set")
+@click.option("--description", help="The description to set")
+@click.option("--duration", help="The duration to set")
+@click.option("--speaker", help="The speaker data to set")
 @click.pass_obj
-def overlap(indico, conference):
+def subcontribution(
+    indico, conference, parent, fromContribution, title, description, duration, speaker
+):
+    if fromContribution:
+        contrib = indico.get_contribution_entry(conference, fromContribution)
+        title = contrib["title"]
+        description = contrib["description"]
+        duration = contrib["duration"]
+        persons = []
+        for person in contrib["persons"]:
+            if person["is_speaker"]:
+                persons.append(person)
+                person["roles"] = ["speaker"]
+                del person["is_speaker"]
+
+    indico.create_subcontribution(
+        conference,
+        parent,
+        {
+            "title": title,
+            "description": description,
+            "duration": duration,
+            "speakers": json.dumps(persons),
+            "references": "[]",
+            "code": contrib["code"] if fromContribution else "",
+        },
+    )
+
+
+@main.command()
+@click.argument("conference", type=int)
+@click.argument("constraints", type=click.File())
+@click.option("--noauthor", is_flag=True)
+@click.option("--usecache", is_flag=True, help="Use contributions.json cache")
+@click.pass_obj
+def overlap(indico, conference, constraints, noauthor, usecache):
     """Check timetable overlap"""
 
-    indico.check_overlap(conference)
+    def get_contrib_url(contrib):
+        return f"https://events.canonical.com/event/{conference}/contributions/{contrib[idprop]}"
+
+    def get_contrib_date(contrib):
+        return datetime.fromisoformat(
+            contrib["startDate"]["date"] + "T" + contrib["startDate"]["time"]
+        )
+
+    data = yaml.safe_load(constraints)
+    import operator
+    from datetime import date, datetime
+    from pprint import pprint
+
+    import pytz
+
+    results = indico.get_contributions(conference, cache=usecache, tz=data["timezone"])
+    contributions = results["results"][0]["contributions"]
+    timezone = pytz.timezone(data["timezone"])
+    idprop = data.get("idprop", "id")
+
+    contributions = {int(contrib[idprop]): contrib for contrib in contributions}
+
+    for constraint in data["constraints"]:
+        if constraint["id"] not in contributions:
+            print(f"Failed: Could not find {constraint['id']}")
+            continue
+        contrib = contributions[constraint["id"]]
+        contrib_date = get_contrib_date(contrib)
+        contrib_url = get_contrib_url(contrib)
+        failed = False
+
+        print(f"Check: {contrib['title']}")
+
+        if "room" in constraint:
+            if constraint["room"] != contrib["room"]:
+                print(f"\tFailed: {contrib_url} in the wrong room")
+                print(f"\tShould be in {constraint['room']}")
+            else:
+                print(f"\tOK: is in {constraint['room']}")
+
+        if "before" in constraint:
+            if isinstance(constraint["before"], (date, datetime)):
+                constraint_date = constraint["before"]
+
+                if isinstance(constraint_date, date):
+                    constraint_date = datetime(
+                        year=constraint_date.year,
+                        month=constraint_date.month,
+                        day=constraint_date.day,
+                    )
+
+                if not (contrib_date < constraint_date):
+                    print(f"\tFailed: {contrib_url} needs to be earlier")
+                    print(f"\t!({contrib_date} < {constraint_date})")
+                else:
+                    print(f"\tOK: is before {constraint_date}")
+
+            if isinstance(constraint["before"], int):
+                othercontrib = contributions[constraint["before"]]
+                other_contrib_date = get_contrib_date(other_contrib)
+
+                if not (contrib_date < other_contrib_date):
+                    print(
+                        f"\tFailed: {contrib_url} is not before {get_contrib_url(other_contrib)}"
+                    )
+                    print(f"\t!({contrib_date} < {other_contrib_date})")
+                else:
+                    print(f"\tOK: is before {other_contrib['title']}")
+
+        if "after" in constraint:
+            if isinstance(constraint["after"], (date, datetime)):
+                constraint_date = constraint["after"]
+
+                if isinstance(constraint_date, date):
+                    constraint_date = datetime(
+                        year=constraint_date.year,
+                        month=constraint_date.month,
+                        day=constraint_date.day,
+                    )
+
+                if not (contrib_date > constraint_date):
+                    print(f"\tFailed: {contrib_url} needs to be later")
+                    print(f"\t!({contrib_date} > {constraint_date})")
+                else:
+                    print(f"\tOK: is after {constraint_date}")
+
+            if isinstance(constraint["after"], int):
+                other_contrib = contributions[constraint["after"]]
+                other_contrib_date = get_contrib_date(other_contrib)
+
+                if not (contrib_date > other_contrib_date):
+                    print(
+                        f"\tFailed: {contrib_url} is not after {get_contrib_url(other_contrib)}"
+                    )
+                    print(f"\t!({contrib_date} > {other_contrib_date})")
+                else:
+                    print(f"\tOK: is after {other_contrib['title']}")
+
+    if not noauthor:
+        print("Author conflicts:")
+        indico.check_author_overlap(conference)
 
 
 @main.command()
