@@ -112,7 +112,13 @@ class Indico:
             f"/event/{conference}/manage/registration/{regform}/registrations/customize",
         )
 
+        hasId = False
+        if "id" in fields:
+            hasId = True
+            fields.remove("id")
+
         query["visible_items"] = json.dumps(fields)
+
         r = self._request("POST", url, data=query)
         rdata = r.json()
         doc = lxml.html.document_fromstring(rdata["html"])
@@ -122,10 +128,11 @@ class Indico:
         for row in rows:
             result = {}
             for idx, td in enumerate(row.cssselect("td")):
-                if headers[idx] == "Full name":
+                if not headers[idx] or headers[idx] == "Full name":
                     continue
-                if idx < 2:
-                    continue
+                elif headers[idx] == "ID":
+                    if hasId:
+                        result[headers[idx]] = int(td.text_content().strip()[1:])
                 elif "data-text" in td.attrib:
                     result[headers[idx]] = td.attrib["data-text"]
                 else:

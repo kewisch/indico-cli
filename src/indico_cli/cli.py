@@ -138,7 +138,12 @@ def regquery(indico, conference, regform, query, fields, fmt):
     fieldmap, rawfieldmap = fieldnamemap(fieldinfo, False)
 
     try:
-        fields = list(map(lambda field: fieldmap[field]["htmlName"], fields.split(",")))
+        fields = list(
+            map(
+                lambda field: fieldmap[field]["id"] if field != "ID" else "id",
+                fields.split(","),
+            )
+        )
         querydict = {fieldmap[key]["htmlName"]: value for key, value in query}
     except KeyError as e:
         click.echo(f"Unknown field name: {e.args[0]}")
