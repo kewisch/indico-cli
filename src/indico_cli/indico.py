@@ -210,10 +210,28 @@ class Indico:
         r = self._request("GET", url, params=params)
         return r.json()
 
+    def add_contribution(self, conference, entry):
+        url = urljoin(self.urlbase, f"/event/{conference}/manage/contributions/create")
+        r = self._request("POST", url, data=entry)
+        data = r.json()
+        if not data["success"]:
+            raise Exception("No success")
+
     def get_contribution_entry(self, conference, cid):
         url = urljoin(self.urlbase, f"/event/{conference}/contributions/{cid}.json")
         r = self._request("GET", url)
         return r.json()
+
+    def create_subcontribution(self, conference, parent, entry):
+        url = urljoin(
+            self.urlbase,
+            f"/event/{conference}/manage/contributions/{parent}/subcontributions/create",
+        )
+        r = self._request("POST", url, data=entry)
+        data = r.json()
+        if not data.get("success", False):
+            raise Exception("No success")
+        return data
 
     def check_contrib_submitter(self, conference):
         """
@@ -474,6 +492,19 @@ class Indico:
         if entryA["startDate"]["date"] != entryB["startDate"]["date"]:
             self.move_timetable(conference, timetableIDA, entryB["startDate"]["date"])
             self.move_timetable(conference, timetableIDB, entryA["startDate"]["date"])
+
+    def schedule(self, conference, contribution, room, startDate):
+        url = urljoin(
+            self.urlbase,
+            f"/event/{conference}/ngtimetable/manage/schedule/{contribution}",
+        )
+
+        params = {"startDate": startDate, "locationData": room, "session": None}
+        r = self._request("POST", url, json=params)
+        data = r.json()
+
+        if not data["success"]:
+            raise Exception("No success")
 
     def get_log(
         self,

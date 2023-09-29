@@ -731,6 +731,40 @@ def convertid(indico, conference, fromtype, fromid, totype, usecache):
 
 
 @main.command()
+@click.argument("conference", type=int)
+@click.argument("contribution", type=int)
+@click.argument(
+    "startdate", type=click.DateTime(formats=["%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"])
+)
+@click.argument("timezone")
+@click.option("--room-id", type=int, help="Room ID to schedule in")
+@click.option("--venue-id", type=int, help="Venue ID to schedule in")
+@click.option("--room-name", help="Room Name to schedule in")
+@click.pass_obj
+def schedule(
+    indico, conference, contribution, startdate, timezone, room_id, venue_id, room_name
+):
+    if room_id and venue_id:
+        locationData = {"inheriting": False, "room_id": room_id, "venue_id": venue_id}
+    elif not room_id and not venue_id and room_name:
+        locationData = {"inheriting": False, "room_name": room_name}
+    elif not room_id and not venue_id and not room_name:
+        locationData = {"inheriting": True}
+    else:
+        raise click.UsageError(
+            f"Must specify --room-id/--venue-id or --room-name, not both"
+        )
+
+    dateinfo = {
+        "date": startdate.strftime("%Y-%m-%d"),
+        "time": startdate.strftime("%H:%M:%S"),
+        "timezone": timezone,
+    }
+
+    indico.schedule(conference, contribution, locationData, dateinfo)
+
+
+@main.command()
 @click.option("--prod", is_flag=True, help="Clear the production token")
 @click.option("--stage", is_flag=True, help="Clear the production token")
 def cleartoken(prod, stage):
