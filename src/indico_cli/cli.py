@@ -222,7 +222,7 @@ def regedit(
         )
         click.echo("Done")
     else:
-        cachereg = RegIdMap(indico, conference)
+        cachereg = RegIdMap(indico, conference, regform)
         try:
             regids = list(
                 map(
@@ -333,7 +333,7 @@ def regeditcsv(
     click.echo("Loading field and registration data...", nl=False)
     fieldinfo = indico.regfields(conference, regform)
     fieldmap, rawfieldmap = fieldnamemap(fieldinfo, rawfields)
-    cachereg = RegIdMap(indico, conference, noisy=False)
+    cachereg = RegIdMap(indico, conference, regform, noisy=False)
     click.echo("Done")
 
     fieldnames = None
@@ -376,7 +376,7 @@ def regeditcsv(
             )
             click.echo("Done")
             # Reload cache to get new reg ids
-            cachereg = RegIdMap(indico, conference)
+            cachereg = RegIdMap(indico, conference, regform)
 
     for row in tqdm(rows, desc="Setting fields", unit="users"):
         try:

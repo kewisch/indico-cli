@@ -220,10 +220,11 @@ def fieldnamemap(fieldinfo, rawfields):
 
 
 class RegIdMap(Mapping):
-    def __init__(self, indico, conference, noisy=True):
+    def __init__(self, indico, conference, regform=None, noisy=True):
         super().__init__()
         self._indico = indico
         self._conference = conference
+        self._regform = regform
         self._noisy = noisy
         self._cache = None
 
@@ -231,12 +232,26 @@ class RegIdMap(Mapping):
         if not self._cache:
             if self._noisy:
                 print("Looking up emails...", end="", flush=True)
-            self._cache = dict(
-                map(
-                    lambda row: (row["personal_data"]["email"], row["registrant_id"]),
-                    self._indico.get_registrations(self._conference),
+
+            if self._regform:
+                self._cache = dict(
+                    map(
+                        lambda row: (row["Email Address"], row["dbid"]),
+                        self._indico.query_registration(
+                            self._conference, self._regform, fields=["dbid", "email"]
+                        ),
+                    )
                 )
-            )
+            else:
+                self._cache = dict(
+                    map(
+                        lambda row: (
+                            row["personal_data"]["email"],
+                            row["registrant_id"],
+                        ),
+                        self._indico.get_registrations(self._conference),
+                    )
+                )
             if self._noisy:
                 print("Done")
 
@@ -251,3 +266,7 @@ class RegIdMap(Mapping):
     def __len__(self):
         self._ensurecache()
         return self._cache.__len__()
+
+    def __repr__(self):
+        self._ensurecache()
+        return repr(self._cache)

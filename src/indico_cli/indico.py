@@ -130,8 +130,13 @@ class Indico:
         for row in rows:
             result = {}
             for idx, td in enumerate(row.cssselect("td")):
-                if not headers[idx] or headers[idx] == "Full name":
+                if not headers[idx]:
                     continue
+                elif headers[idx] == "Full name":
+                    if "dbid" in fields:
+                        result["dbid"] = int(
+                            td.cssselect("a")[0].attrib["href"].split("/")[-2]
+                        )
                 elif headers[idx] == "ID":
                     if hasId:
                         result[headers[idx]] = int(td.text_content().strip()[1:])
@@ -191,10 +196,10 @@ class Indico:
 
         r = self._request("POST", url, ignore_code=True, files=files, data=data)
 
-        if r.status_code == 400:
+        if r.status_code == 400 or r.status_code == 500:
             doc = lxml.html.document_fromstring(r.text)
             error = doc.cssselect(".main .error-box p")[0].text_content().strip()
-            raise Exception(error)
+            raise Exception("Remote exception: " + error)
 
         if r.status_code != 200:
             print(r.text)
